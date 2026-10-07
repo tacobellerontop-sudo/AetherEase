@@ -1,0 +1,397 @@
+{
+  "name": "Demo",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 90,
+  "background": {
+    "r": 0.06,
+    "g": 0.05,
+    "b": 0.12,
+    "a": 1.0
+  },
+  "layers": [
+    {
+      "id": 1,
+      "name": "Card",
+      "kind": {
+        "Shape": {
+          "shape": "Rectangle",
+          "size": {
+            "value": {
+              "x": 1200.0,
+              "y": 640.0
+            }
+          },
+          "corner_radius": {
+            "value": 48.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 90,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          },
+          "keyframes": [
+            {
+              "frame": 0,
+              "value": {
+                "x": 0.6,
+                "y": 0.6
+              },
+              "easing": "EaseOut"
+            },
+            {
+              "frame": 20,
+              "value": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "easing": "Linear"
+            }
+          ]
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0,
+        "keyframes": [
+          {
+            "frame": 0,
+            "value": 0.0,
+            "easing": "Linear"
+          },
+          {
+            "frame": 15,
+            "value": 1.0,
+            "easing": "Linear"
+          }
+        ]
+      },
+      "fill": {
+        "value": {
+          "r": 0.16,
+          "g": 0.13,
+          "b": 0.3,
+          "a": 1.0
+        }
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Star",
+      "kind": {
+        "Shape": {
+          "shape": {
+            "Star": {
+              "points": 5,
+              "inner_ratio": 0.45
+            }
+          },
+          "size": {
+            "value": {
+              "x": 270.0,
+              "y": 270.0
+            }
+          },
+          "corner_radius": {
+            "value": 0.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 10,
+      "out_frame": 90,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          },
+          "keyframes": [
+            {
+              "frame": 10,
+              "value": {
+                "x": 500.0,
+                "y": 540.0
+              },
+              "easing": "EaseInOut"
+            },
+            {
+              "frame": 60,
+              "value": {
+                "x": 1420.0,
+                "y": 540.0
+              },
+              "easing": "Linear"
+            }
+          ]
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0,
+          "keyframes": [
+            {
+              "frame": 10,
+              "value": 0.0,
+              "easing": "Linear"
+            },
+            {
+              "frame": 60,
+              "value": 216.0,
+              "easing": "Linear"
+            }
+          ]
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 0.77,
+          "b": 0.25,
+          "a": 1.0
+        }
+      },
+      "border": {
+        "enabled": true,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Ellipse",
+      "kind": {
+        "Shape": {
+          "shape": "Ellipse",
+          "size": {
+            "value": {
+              "x": 270.0,
+              "y": 270.0
+            }
+          },
+          "corner_radius": {
+            "value": 0.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 90,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 1500.0,
+            "y": 300.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 0.33,
+          "g": 0.55,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "keyframes": [
+          {
+            "frame": 0,
+            "value": {
+              "r": 0.4,
+              "g": 0.6,
+              "b": 1.0,
+              "a": 1.0
+            },
+            "easing": "Linear"
+          },
+          {
+            "frame": 45,
+            "value": {
+              "r": 1.0,
+              "g": 0.35,
+              "b": 0.5,
+              "a": 1.0
+            },
+            "easing": "Linear"
+          }
+        ]
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Title",
+      "kind": {
+        "Text": {
+          "text": "AetherEase",
+          "font_size": 86.4
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 90,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          },
+          "keyframes": [
+            {
+              "frame": 0,
+              "value": {
+                "x": 960.0,
+                "y": 360.0
+              },
+              "easing": "EaseOut"
+            },
+            {
+              "frame": 25,
+              "value": {
+                "x": 960.0,
+                "y": 420.0
+              },
+              "easing": "Linear"
+            }
+          ]
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0,
+        "keyframes": [
+          {
+            "frame": 0,
+            "value": 0.0,
+            "easing": "Linear"
+          },
+          {
+            "frame": 25,
+            "value": 1.0,
+            "easing": "Linear"
+          }
+        ]
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    }
+  ],
+  "next_id": 5
+}
