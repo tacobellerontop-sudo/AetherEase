@@ -6,8 +6,8 @@ use egui::{
 };
 
 use crate::app::AetherApp;
-use crate::model::Project;
-use crate::render::{self, View, rotate};
+use crate::model::{LayerKind, Project};
+use crate::render::{self, View};
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
@@ -39,7 +39,8 @@ enum GizmoDrag {
     Move {
         id: u64,
         start_position: Vec2,
-        start_pointer: Vec2,
+        /// Where the pointer first hit the layer's plane, in parent space.
+        start_hit: Vec2,
     },
     Scale {
         id: u64,
@@ -86,6 +87,7 @@ impl AetherApp {
             &self.project,
             self.frame,
             &mut self.textures,
+            true,
         );
         draw_outside_dim(&painter, rect, view, &self.project);
 
@@ -149,8 +151,12 @@ impl AetherApp {
             self.select(picked);
         }
 
+        // Start from where the button went down, not where the drag was
+        // recognised a few pixels later, so the layer stays under the pointer.
         if response.drag_started_by(PointerButton::Primary)
-            && let Some(pointer) = response.interact_pointer_pos()
+            && let Some(pointer) = ui
+                .input(|i| i.pointer.press_origin())
+                .or(response.interact_pointer_pos())
         {
             self.viewport.drag = self.start_gizmo_drag(&ctx, view, pointer);
         }
@@ -164,10 +170,12 @@ impl AetherApp {
                 GizmoDrag::Move {
                     id,
                     start_position,
-                    start_pointer,
+                    start_hit,
                 } => {
-                    if let Some(layer) = self.project.layer_mut(id) {
-                        let position = start_position + pointer_canvas - start_pointer;
+                    if let Some(hit) = self.parent_plane_hit(id, pointer_canvas)
+                        && let Some(layer) = self.project.layer_mut(id)
+                    {
+                        let position = start_position + hit - start_hit;
                         layer.transform.position.set(frame, position);
                     }
                 }
@@ -176,10 +184,16 @@ impl AetherApp {
                     start_scale,
                     corner,
                 } => {
-                    if let Some(layer) = self.project.layer_mut(id) {
-                        let position = layer.transform.position.sample(frame as f32);
-                        let rotation = layer.transform.rotation.sample(frame as f32).to_radians();
-                        let local = rotate(pointer_canvas - position, -rotation);
+                    // The pointer in the layer's own axes, scaled but not
+                    // rotated, so it compares directly with the corner.
+                    let local = self.project.layer(id).and_then(|layer| {
+                        let geom = render::layer_geom(&ctx, &self.project, layer, frame as f32);
+                        let s = layer.transform.scale.sample(frame as f32);
+                        Some((geom.canvas_to_local(pointer_canvas)? - geom.anchor) * s)
+                    });
+                    if let Some(local) = local
+                        && let Some(layer) = self.project.layer_mut(id)
+                    {
                         let scale = if shift {
                             let start_len = (corner * start_scale).length().max(1e-3);
                             let along = local.dot((corner * start_scale) / start_len);
@@ -200,8 +214,13 @@ impl AetherApp {
                     start_rotation,
                     start_angle,
                 } => {
-                    if let Some(layer) = self.project.layer_mut(id) {
-                        let center = view.to_screen(layer.transform.position.sample(frame as f32));
+                    let center = self.project.layer(id).map(|layer| {
+                        let geom = render::layer_geom(&ctx, &self.project, layer, frame as f32);
+                        view.to_screen(geom.anchor_canvas())
+                    });
+                    if let Some(center) = center
+                        && let Some(layer) = self.project.layer_mut(id)
+                    {
                         let d = pointer - center;
                         let mut rotation =
                             start_rotation + (d.y.atan2(d.x) - start_angle).to_degrees();
@@ -222,10 +241,32 @@ impl AetherApp {
     /// The selected layer's geometry, if it can be edited on the canvas.
     fn editable_selection(&self, ctx: &egui::Context) -> Option<(u64, render::LayerGeom)> {
         let layer = self.selected_layer()?;
-        if !layer.is_active_at(self.frame) || layer.locked {
+        if !layer.is_active_at(self.frame)
+            || layer.locked
+            || matches!(layer.kind, LayerKind::Camera { .. })
+        {
             return None;
         }
-        Some((layer.id, render::layer_geom(ctx, layer, self.frame as f32)))
+        let geom = render::layer_geom(ctx, &self.project, layer, self.frame as f32);
+        geom.in_front().then_some((layer.id, geom))
+    }
+
+    /// Where the line through canvas point `p` crosses the plane the layer
+    /// moves in, expressed in its parent's space. Moving the layer's
+    /// position by the change in this point keeps it under the pointer,
+    /// whatever its parents and the camera are doing.
+    fn parent_plane_hit(&self, id: u64, p: Vec2) -> Option<Vec2> {
+        let layer = self.project.layer(id)?;
+        let frame = self.frame as f32;
+        let parent = self.project.parent_matrix(layer, frame);
+        let z = if layer.is_3d() {
+            layer.transform.z.sample(frame)
+        } else {
+            0.0
+        };
+        self.project
+            .projection_for(layer, self.frame)
+            .hit_plane(&parent, p, z)
     }
 
     fn handle_at(&self, ctx: &egui::Context, view: View, pointer: Pos2) -> Option<Handle> {
@@ -258,7 +299,8 @@ impl AetherApp {
                     corner: corner - t.anchor,
                 },
                 Handle::Rotate => {
-                    let d = pointer - view.to_screen(t.position.sample(frame));
+                    let geom = render::layer_geom(ctx, &self.project, layer, frame);
+                    let d = pointer - view.to_screen(geom.anchor_canvas());
                     GizmoDrag::Rotate {
                         id: layer.id,
                         start_rotation: t.rotation.sample(frame),
@@ -276,7 +318,7 @@ impl AetherApp {
             .filter(|(id, _)| {
                 self.project
                     .layer(*id)
-                    .is_some_and(|l| render::hit_test(ctx, l, frame, pointer_canvas))
+                    .is_some_and(|l| render::hit_test(ctx, &self.project, l, frame, pointer_canvas))
             })
             .map(|(id, _)| id)
             .or_else(|| render::pick_layer(ctx, &self.project, self.frame, pointer_canvas));
@@ -285,7 +327,7 @@ impl AetherApp {
         Some(GizmoDrag::Move {
             id: layer.id,
             start_position: layer.transform.position.sample(frame),
-            start_pointer: pointer_canvas,
+            start_hit: self.parent_plane_hit(layer.id, pointer_canvas)?,
         })
     }
 
@@ -293,10 +335,13 @@ impl AetherApp {
         let Some(layer) = self.selected_layer() else {
             return;
         };
-        if !layer.is_active_at(self.frame) {
+        if !layer.is_active_at(self.frame) || matches!(layer.kind, LayerKind::Camera { .. }) {
             return;
         }
-        let geom = render::layer_geom(painter.ctx(), layer, self.frame as f32);
+        let geom = render::layer_geom(painter.ctx(), &self.project, layer, self.frame as f32);
+        if !geom.in_front() {
+            return;
+        }
         let corners = geom
             .local_corners()
             .map(|c| view.to_screen(geom.local_to_canvas(c)));
@@ -304,7 +349,7 @@ impl AetherApp {
         painter.add(egui::Shape::closed_line(corners.to_vec(), outline));
 
         // Anchor point.
-        let anchor = view.to_screen(geom.position);
+        let anchor = view.to_screen(geom.anchor_canvas());
         painter.circle_stroke(anchor, 5.0, Stroke::new(1.5, Color32::WHITE));
         painter.line_segment(
             [anchor - vec2(8.0, 0.0), anchor + vec2(8.0, 0.0)],
@@ -391,7 +436,7 @@ fn rotate_handle_pos(view: View, geom: &render::LayerGeom) -> Pos2 {
     let up = if up.is_finite() && up != Vec2::ZERO {
         up
     } else {
-        rotate(vec2(0.0, -1.0), geom.rotation)
+        vec2(0.0, -1.0)
     };
     top_mid + up * ROTATE_HANDLE_OFFSET
 }

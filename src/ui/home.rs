@@ -166,7 +166,14 @@ impl AetherApp {
                 };
                 let thumb_painter = painter.with_clip_rect(thumb);
                 let frame = project.duration / 3;
-                render::draw_project(&thumb_painter, view, project, frame, &mut self.textures);
+                render::draw_project(
+                    &thumb_painter,
+                    view,
+                    project,
+                    frame,
+                    &mut self.textures,
+                    false,
+                );
                 (
                     project.name.clone(),
                     format!(

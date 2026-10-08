@@ -133,6 +133,16 @@ impl AetherApp {
         self.select(Some(id));
     }
 
+    pub fn add_null(&mut self) {
+        let id = self.project.add_null(self.frame);
+        self.select(Some(id));
+    }
+
+    pub fn add_camera(&mut self) {
+        let id = self.project.add_camera(self.frame);
+        self.select(Some(id));
+    }
+
     pub fn import_image(&mut self, ctx: &Context) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Images", &IMAGE_EXTENSIONS)

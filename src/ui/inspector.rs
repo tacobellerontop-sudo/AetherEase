@@ -172,6 +172,16 @@ impl AetherApp {
             if icons::toggle(ui, lock, "Lock / unlock", layer.locked).clicked() {
                 layer.locked = !layer.locked;
             }
+            if !matches!(layer.kind, LayerKind::Camera { .. }) {
+                let tip = if layer.three_d {
+                    "3D layer: turn off to make it flat"
+                } else {
+                    "Make this a 3D layer (depth, tilt, camera)"
+                };
+                if icons::toggle(ui, Icon::Cube, tip, layer.three_d).clicked() {
+                    layer.three_d = !layer.three_d;
+                }
+            }
             if icons::button(ui, Icon::Up, "Bring forward").clicked() {
                 action = Some(LayerAction::Reorder(1));
             }
@@ -190,23 +200,25 @@ impl AetherApp {
         // Property categories as icon tiles, one page at a time, the way
         // Alight Motion groups a layer's settings.
         let is_shape = matches!(layer.kind, LayerKind::Shape { .. });
+        let has_content = layer.kind.is_visual();
         let page_id = egui::Id::new("inspector_page");
         let mut page = ui
             .data(|d| d.get_temp::<Page>(page_id))
             .unwrap_or(Page::Transform);
-        if page == Page::Border && !is_shape {
+        if (page == Page::Border && !is_shape)
+            || (matches!(page, Page::Content | Page::Fill) && !has_content)
+        {
             page = Page::Transform;
         }
-        let (kind_icon, kind_label) = match &layer.kind {
-            LayerKind::Shape { .. } => (theme::layer_icon(&layer.kind), "Shape"),
-            LayerKind::Text { .. } => (Icon::Text, "Text"),
-            LayerKind::Image { .. } => (Icon::Image, "Image"),
-        };
-        let mut pages = vec![
-            (Page::Transform, Icon::Transform, "Move"),
-            (Page::Content, kind_icon, kind_label),
-            (Page::Fill, Icon::Fill, "Color"),
-        ];
+        let mut pages = vec![(Page::Transform, Icon::Transform, "Move")];
+        if has_content {
+            pages.push((
+                Page::Content,
+                theme::layer_icon(&layer.kind),
+                layer.kind.label(),
+            ));
+            pages.push((Page::Fill, Icon::Fill, "Color"));
+        }
         if is_shape {
             pages.push((Page::Border, Icon::Border, "Border"));
         }
@@ -224,8 +236,61 @@ impl AetherApp {
         ui.data_mut(|d| d.insert_temp(page_id, page));
         ui.add_space(8.0);
 
+        // Layers this one could be parented to: anything that isn't itself
+        // or already one of its children.
+        let parent_choices: Vec<(u64, String)> = self
+            .project
+            .layers
+            .iter()
+            .rev()
+            .filter(|l| !self.project.is_ancestor(id, l.id))
+            .map(|l| (l.id, l.name.clone()))
+            .collect();
+        let Some(layer) = self.project.layer_mut(id) else {
+            return;
+        };
+
         card(ui, |ui| match page {
-            Page::Transform => transform_section(ui, layer, frame),
+            Page::Transform => {
+                transform_section(ui, layer, frame);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                    icons::paint(
+                        ui.painter(),
+                        icon_rect,
+                        Icon::Link,
+                        ui.visuals().weak_text_color(),
+                    );
+                    ui.label("Parent");
+                    let current = layer.parent.and_then(|p| {
+                        parent_choices
+                            .iter()
+                            .find(|(id, _)| *id == p)
+                            .map(|(_, n)| n.as_str())
+                    });
+                    egui::ComboBox::from_id_salt("parent")
+                        .selected_text(current.unwrap_or("None"))
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(layer.parent.is_none(), "None")
+                                .clicked()
+                            {
+                                action = Some(LayerAction::Parent(None));
+                            }
+                            for (pid, name) in &parent_choices {
+                                if ui
+                                    .selectable_label(layer.parent == Some(*pid), name)
+                                    .clicked()
+                                {
+                                    action = Some(LayerAction::Parent(Some(*pid)));
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Follow another layer's move, scale and rotation");
+                });
+            }
             Page::Content => match &mut layer.kind {
                 LayerKind::Shape {
                     shape,
@@ -252,6 +317,7 @@ impl AetherApp {
                     ui.label(format!("{} × {} px", size.x, size.y));
                     ui.label(RichText::new(path.display().to_string()).small().weak());
                 }
+                LayerKind::Null | LayerKind::Camera { .. } => {}
             },
             Page::Fill => {
                 Grid::new("fill_grid").num_columns(3).show(ui, |ui| {
@@ -344,6 +410,9 @@ impl AetherApp {
                 self.delete_selection();
             }
             Some(LayerAction::Reorder(delta)) => self.project.reorder_layer(id, delta),
+            Some(LayerAction::Parent(parent)) => {
+                self.project.reparent_in_place(id, parent, frame);
+            }
             None => {}
         }
     }
@@ -363,6 +432,7 @@ enum LayerAction {
     Duplicate,
     Delete,
     Reorder(isize),
+    Parent(Option<u64>),
 }
 
 /// A rounded surface that groups a page of settings.
@@ -378,20 +448,50 @@ fn card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
 }
 
 fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
+    let three_d = layer.is_3d();
+    let camera = matches!(layer.kind, LayerKind::Camera { .. });
     Grid::new("transform_grid").num_columns(3).show(ui, |ui| {
         let t = &mut layer.transform;
         anim_row(ui, "Position", &mut t.position, frame, |ui, v| {
             vec2_edit(ui, v, 1.0, " px")
         });
-        anim_row(ui, "Scale", &mut t.scale, frame, |ui, v| {
-            let mut percent = *v * 100.0;
-            let changed = vec2_edit(ui, &mut percent, 0.5, "%");
-            *v = percent / 100.0;
-            changed
-        });
-        anim_row(ui, "Rotation", &mut t.rotation, frame, |ui, v| {
-            ui.add(DragValue::new(v).speed(0.5).suffix("°")).changed()
-        });
+        if three_d {
+            anim_row(ui, "Depth", &mut t.z, frame, |ui, v| {
+                ui.add(DragValue::new(v).speed(1.0).prefix("Z ").suffix(" px"))
+                    .on_hover_text("Positive values move away from the camera")
+                    .changed()
+            });
+        }
+        if !camera {
+            anim_row(ui, "Scale", &mut t.scale, frame, |ui, v| {
+                let mut percent = *v * 100.0;
+                let changed = vec2_edit(ui, &mut percent, 0.5, "%");
+                *v = percent / 100.0;
+                changed
+            });
+        }
+        let degrees =
+            |ui: &mut Ui, v: &mut f32| ui.add(DragValue::new(v).speed(0.5).suffix("°")).changed();
+        if three_d {
+            anim_row(ui, "Tilt X", &mut t.rotation_x, frame, degrees);
+            anim_row(ui, "Turn Y", &mut t.rotation_y, frame, degrees);
+            anim_row(ui, "Rotate Z", &mut t.rotation, frame, degrees);
+        } else {
+            anim_row(ui, "Rotation", &mut t.rotation, frame, degrees);
+        }
+        if let LayerKind::Camera { zoom } = &mut layer.kind {
+            anim_row(ui, "Zoom", zoom, frame, |ui, v| {
+                ui.add(
+                    DragValue::new(v)
+                        .range(10.0..=100_000.0)
+                        .speed(2.0)
+                        .suffix(" px"),
+                )
+                .on_hover_text("Distance at which a layer appears at 100%")
+                .changed()
+            });
+            return;
+        }
 
         ui.label("");
         ui.label("Anchor");

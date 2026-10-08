@@ -179,5 +179,19 @@ impl AetherApp {
                 self.import_image(&ui.ctx().clone());
             }
         });
+        ui.horizontal(|ui| {
+            if icons::tile(ui, Icon::Null, "Null", false, size)
+                .on_hover_text("An invisible layer to parent others to")
+                .clicked()
+            {
+                self.add_null();
+            }
+            if icons::tile(ui, Icon::Camera, "Camera", false, size)
+                .on_hover_text("Views 3D layers in perspective")
+                .clicked()
+            {
+                self.add_camera();
+            }
+        });
     }
 }

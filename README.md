@@ -10,6 +10,8 @@ grow into a real alternative to After Effects.
 |---|---|
 | ![Home screen](docs/home.png) | ![New project dialog](docs/new-project.png) |
 
+![A 3D scene with a camera orbiting around a null](docs/3d.png)
+
 ## What works today
 
 - **Home screen**: one button to create a project and a grid of recent
@@ -28,6 +30,15 @@ grow into a real alternative to After Effects.
   Timing), and the timeline along the bottom with centred playback controls.
 - **Layers**: rectangles (with rounded corners), ellipses, triangles,
   polygons, stars, text, and imported images (PNG, JPEG, WebP, BMP, GIF).
+- **Null layers**: invisible layers (a dashed box in the editor, nothing in
+  the output) that other layers can be parented to.
+- **Parenting**: pick a Parent on the Move page and the layer follows that
+  layer's position, scale and rotation. Parenting keeps the layer where it is.
+- **3D layers**: the cube button on any layer adds Depth (Z), Tilt X and
+  Turn Y. 3D layers are drawn in perspective and sorted by distance, so
+  nearer layers cover farther ones. Add a **Camera** layer to move, turn and
+  zoom the view; parent it to a null to orbit. Without one, depth 0 looks
+  exactly like 2D. See `examples/3d-demo.aether`.
 - **Canvas editing**: click to select, drag to move, corner handles to scale
   (Shift for uniform), top handle to rotate (Shift snaps to 15°). Scroll to
   zoom, middle or right drag to pan.
@@ -54,6 +65,7 @@ Install Rust from <https://rustup.rs>, then:
 ```sh
 cargo run --release                         # empty project
 cargo run --release -- examples/demo.aether # open the demo
+cargo run --release -- examples/3d-demo.aether
 ```
 
 On Windows this produces a native `aetherease.exe` using DirectX 12 or Vulkan
@@ -77,6 +89,7 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | Path | What it holds |
 |---|---|
 | `src/model/anim.rs` | `Animated<T>` values, keyframes, easing |
+| `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
 | `src/render.rs` | Draws layers, transforms, hit testing, image textures |
 | `src/history.rs` | Snapshot-based undo/redo |

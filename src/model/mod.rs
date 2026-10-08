@@ -1,6 +1,7 @@
 //! The document model: a [`Project`] is a canvas plus a stack of [`Layer`]s.
 
 pub mod anim;
+pub mod space;
 
 use std::path::PathBuf;
 
@@ -101,9 +102,47 @@ pub enum LayerKind {
         /// Pixel size of the image when it was imported.
         size: Vec2,
     },
+    /// An invisible layer that other layers can be parented to.
+    Null,
+    /// Views 3D layers in perspective. Its transform places the camera; the
+    /// top-most active camera is the one used.
+    Camera {
+        /// Distance in pixels at which a 3D layer appears at 100%.
+        zoom: Animated<f32>,
+    },
+}
+
+impl LayerKind {
+    /// Nulls and cameras only exist in the editor; they never render.
+    pub fn is_visual(&self) -> bool {
+        !matches!(self, LayerKind::Null | LayerKind::Camera { .. })
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            LayerKind::Shape { .. } => "Shape",
+            LayerKind::Text { .. } => "Text",
+            LayerKind::Image { .. } => "Image",
+            LayerKind::Null => "Null",
+            LayerKind::Camera { .. } => "Camera",
+        }
+    }
+}
+
+/// The side length of a null layer's on-canvas box, in layer pixels.
+pub const NULL_SIZE: f32 = 100.0;
+
+/// Camera distance that shows the z = 0 plane at 100%, scaled to the canvas
+/// width the way a 50 mm lens is in After Effects.
+pub fn default_camera_zoom(width: u32) -> f32 {
+    width as f32 * 1.3889
 }
 
 fn zero_radius() -> Animated<f32> {
+    Animated::new(0.0)
+}
+
+fn zero() -> Animated<f32> {
     Animated::new(0.0)
 }
 
@@ -112,10 +151,19 @@ pub struct Transform {
     /// Canvas position (pixels from the top-left) of the anchor point.
     pub position: Animated<Vec2>,
     pub scale: Animated<Vec2>,
-    /// Clockwise rotation in degrees.
+    /// Clockwise rotation in degrees (around the Z axis for 3D layers).
     pub rotation: Animated<f32>,
     /// The pivot, in layer-local pixels relative to the layer's centre.
     pub anchor: Vec2,
+    /// Depth of a 3D layer; positive values are further from the camera.
+    #[serde(default = "zero")]
+    pub z: Animated<f32>,
+    /// Tilt of a 3D layer around its X axis, in degrees.
+    #[serde(default = "zero")]
+    pub rotation_x: Animated<f32>,
+    /// Turn of a 3D layer around its Y axis, in degrees.
+    #[serde(default = "zero")]
+    pub rotation_y: Animated<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,6 +189,12 @@ pub struct Layer {
     /// Fill colour of shapes and text; a tint multiplier for images.
     pub fill: Animated<Color>,
     pub border: Border,
+    /// The layer whose transform this layer follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u64>,
+    /// Whether the layer lives in 3D space (depth, X/Y rotation, camera).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub three_d: bool,
 }
 
 /// Identifies one animatable property of a layer.
@@ -155,6 +209,10 @@ pub enum PropId {
     CornerRadius,
     BorderWidth,
     BorderColor,
+    Depth,
+    RotationX,
+    RotationY,
+    CameraZoom,
 }
 
 impl Layer {
@@ -172,6 +230,9 @@ impl Layer {
                 scale: Animated::new(vec2(1.0, 1.0)),
                 rotation: Animated::new(0.0),
                 anchor: Vec2::ZERO,
+                z: zero(),
+                rotation_x: zero(),
+                rotation_y: zero(),
             },
             opacity: Animated::new(1.0),
             fill: Animated::new(Color::WHITE),
@@ -180,7 +241,14 @@ impl Layer {
                 width: Animated::new(4.0),
                 color: Animated::new(Color::BLACK),
             },
+            parent: None,
+            three_d: false,
         }
+    }
+
+    /// Whether the layer is placed in 3D space. Cameras always are.
+    pub fn is_3d(&self) -> bool {
+        self.three_d || matches!(self.kind, LayerKind::Camera { .. })
     }
 
     pub fn is_active_at(&self, frame: i32) -> bool {
@@ -189,13 +257,25 @@ impl Layer {
 
     /// Every animatable property this layer has, in display order.
     pub fn props(&self) -> Vec<PropId> {
-        let mut props = vec![
-            PropId::Position,
-            PropId::Scale,
-            PropId::Rotation,
-            PropId::Opacity,
-            PropId::Fill,
-        ];
+        let mut props = vec![PropId::Position];
+        if self.is_3d() {
+            props.push(PropId::Depth);
+        }
+        if !matches!(self.kind, LayerKind::Camera { .. }) {
+            props.push(PropId::Scale);
+        }
+        props.push(PropId::Rotation);
+        if self.is_3d() {
+            props.extend([PropId::RotationX, PropId::RotationY]);
+        }
+        match &self.kind {
+            LayerKind::Null => return props,
+            LayerKind::Camera { .. } => {
+                props.push(PropId::CameraZoom);
+                return props;
+            }
+            _ => props.extend([PropId::Opacity, PropId::Fill]),
+        }
         if let LayerKind::Shape { shape, .. } = &self.kind {
             props.push(PropId::Size);
             if *shape == ShapeKind::Rectangle {
@@ -216,6 +296,13 @@ impl Layer {
             PropId::Fill => &self.fill,
             PropId::BorderWidth => &self.border.width,
             PropId::BorderColor => &self.border.color,
+            PropId::Depth => &self.transform.z,
+            PropId::RotationX => &self.transform.rotation_x,
+            PropId::RotationY => &self.transform.rotation_y,
+            PropId::CameraZoom => match &self.kind {
+                LayerKind::Camera { zoom } => zoom,
+                _ => return None,
+            },
             PropId::Size => match &self.kind {
                 LayerKind::Shape { size, .. } => size,
                 _ => return None,
@@ -236,6 +323,13 @@ impl Layer {
             PropId::Fill => &mut self.fill,
             PropId::BorderWidth => &mut self.border.width,
             PropId::BorderColor => &mut self.border.color,
+            PropId::Depth => &mut self.transform.z,
+            PropId::RotationX => &mut self.transform.rotation_x,
+            PropId::RotationY => &mut self.transform.rotation_y,
+            PropId::CameraZoom => match &mut self.kind {
+                LayerKind::Camera { zoom } => zoom,
+                _ => return None,
+            },
             PropId::Size => match &mut self.kind {
                 LayerKind::Shape { size, .. } => size,
                 _ => return None,
@@ -443,6 +537,67 @@ impl Project {
         self.push(layer)
     }
 
+    pub fn add_null(&mut self, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let name = self.unique_name("Null");
+        let layer = Layer::base(
+            id,
+            name,
+            LayerKind::Null,
+            self.center(),
+            self.new_layer_frames(frame),
+        );
+        self.push(layer)
+    }
+
+    /// Adds a camera that frames the canvas exactly as it looks in 2D.
+    pub fn add_camera(&mut self, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let name = self.unique_name("Camera");
+        let zoom = default_camera_zoom(self.width);
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Camera {
+                zoom: Animated::new(zoom),
+            },
+            self.center(),
+            self.new_layer_frames(frame),
+        );
+        layer.transform.z = Animated::new(-zoom);
+        self.push(layer)
+    }
+
+    /// Whether `ancestor` is `id` itself or one of its parents.
+    pub fn is_ancestor(&self, ancestor: u64, id: u64) -> bool {
+        let mut current = Some(id);
+        // The depth limit guards against cycles in hand-edited files.
+        for _ in 0..=self.layers.len() {
+            match current {
+                Some(c) if c == ancestor => return true,
+                Some(c) => current = self.layer(c).and_then(|l| l.parent),
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Parents `id` to `parent`, refusing anything that would form a loop.
+    pub fn set_parent(&mut self, id: u64, parent: Option<u64>) -> bool {
+        if let Some(p) = parent
+            && (self.layer(p).is_none() || self.is_ancestor(id, p))
+        {
+            return false;
+        }
+        match self.layer_mut(id) {
+            Some(layer) => {
+                layer.parent = parent;
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn layer(&self, id: u64) -> Option<&Layer> {
         self.layers.iter().find(|l| l.id == id)
     }
@@ -457,6 +612,11 @@ impl Project {
 
     pub fn remove_layer(&mut self, id: u64) {
         self.layers.retain(|l| l.id != id);
+        for layer in &mut self.layers {
+            if layer.parent == Some(id) {
+                layer.parent = None;
+            }
+        }
     }
 
     /// Duplicates a layer directly above the original; returns the copy's id.
@@ -646,6 +806,48 @@ mod tests {
 
         layer.remove_keys_at(15);
         assert_eq!(layer.all_key_frames(), vec![20]);
+    }
+
+    #[test]
+    fn parenting_refuses_loops() {
+        let mut project = Project::default();
+        let a = project.add_null(0);
+        let b = project.add_shape(ShapeKind::Rectangle, 0);
+        let c = project.add_text("C", 0);
+        assert!(project.set_parent(b, Some(a)));
+        assert!(project.set_parent(c, Some(b)));
+        assert!(!project.set_parent(a, Some(c)));
+        assert!(!project.set_parent(a, Some(a)));
+        project.remove_layer(b);
+        assert_eq!(project.layer(c).unwrap().parent, None);
+    }
+
+    #[test]
+    fn three_d_props_appear_only_on_3d_layers() {
+        let mut project = Project::default();
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(id).unwrap();
+        assert!(!layer.props().contains(&PropId::Depth));
+        layer.three_d = true;
+        assert!(layer.props().contains(&PropId::RotationY));
+        let cam = project.add_camera(0);
+        let props = project.layer(cam).unwrap().props();
+        assert!(props.contains(&PropId::CameraZoom));
+        assert!(!props.contains(&PropId::Opacity));
+    }
+
+    #[test]
+    fn old_files_without_3d_fields_still_load() {
+        let mut project = Project::default();
+        project.add_shape(ShapeKind::Ellipse, 0);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&project.to_json().unwrap()).unwrap();
+        let t = &mut json["layers"][0]["transform"];
+        for key in ["z", "rotation_x", "rotation_y"] {
+            t.as_object_mut().unwrap().remove(key);
+        }
+        let loaded = Project::from_json(&json.to_string()).unwrap();
+        assert_eq!(loaded, project);
     }
 
     #[test]

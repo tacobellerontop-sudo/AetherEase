@@ -5,13 +5,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui::epaint::{Mesh, TextShape};
+use egui::epaint::{Mesh, Tessellator, TextShape, Vertex};
 use egui::{
     Color32, ColorImage, Context, FontId, Galley, Painter, Pos2, Shape, Stroke, TextureHandle,
     Vec2, vec2,
 };
 
-use crate::model::{Layer, LayerKind, Project, ShapeKind};
+use crate::model::space::{Affine3, NEAR, Projection, vec3};
+use crate::model::{Layer, LayerKind, NULL_SIZE, Project, ShapeKind};
 
 /// Maps canvas pixels to screen points.
 #[derive(Clone, Copy, Debug)]
@@ -32,32 +33,51 @@ impl View {
     }
 }
 
-pub fn rotate(v: Vec2, radians: f32) -> Vec2 {
-    let (s, c) = radians.sin_cos();
-    vec2(v.x * c - v.y * s, v.x * s + v.y * c)
-}
-
-/// A layer's transform and untransformed size at one frame.
+/// Where a layer sits at one frame: how its local pixels reach the canvas.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerGeom {
-    pub position: Vec2,
-    pub scale: Vec2,
-    pub rotation: f32,
-    pub anchor: Vec2,
+    /// Layer-local pixels to world space, parents included.
+    pub world: Affine3,
+    pub projection: Projection,
+    /// Untransformed size of the layer's content.
     pub size: Vec2,
+    pub anchor: Vec2,
 }
 
 impl LayerGeom {
     /// Layer-local pixels (origin at the layer's centre) to canvas pixels.
+    /// Points behind the camera are pushed onto its near plane.
     pub fn local_to_canvas(&self, p: Vec2) -> Vec2 {
-        self.position + rotate((p - self.anchor) * self.scale, self.rotation)
+        let world = self.world.point(vec3(p.x, p.y, 0.0));
+        self.projection.project(world).unwrap_or_else(|| {
+            // Rare: only reached for handles of a layer partly behind the camera.
+            let Projection::Perspective {
+                view, zoom, center, ..
+            } = self.projection
+            else {
+                return world.xy();
+            };
+            let c = view.point(world);
+            center + c.xy() * (zoom / NEAR)
+        })
     }
 
     pub fn canvas_to_local(&self, p: Vec2) -> Option<Vec2> {
-        if self.scale.x.abs() < 1e-6 || self.scale.y.abs() < 1e-6 {
-            return None;
-        }
-        Some(rotate(p - self.position, -self.rotation) / self.scale + self.anchor)
+        self.projection.hit_plane(&self.world, p, 0.0)
+    }
+
+    /// Whether every corner is in front of the camera.
+    pub fn in_front(&self) -> bool {
+        self.local_corners().iter().all(|c| {
+            self.projection
+                .project(self.world.point(vec3(c.x, c.y, 0.0)))
+                .is_some()
+        })
+    }
+
+    /// The anchor point (the layer's pivot) on the canvas.
+    pub fn anchor_canvas(&self) -> Vec2 {
+        self.local_to_canvas(self.anchor)
     }
 
     /// Bounding box corners in layer-local pixels, clockwise from top-left.
@@ -71,26 +91,36 @@ impl LayerGeom {
         ]
     }
 
+    /// Roughly how many canvas pixels one local pixel covers at the anchor.
     pub fn average_scale(&self) -> f32 {
-        (self.scale.x.abs() + self.scale.y.abs()) * 0.5
+        let a = self.anchor_canvas();
+        let dx = (self.local_to_canvas(self.anchor + vec2(1.0, 0.0)) - a).length();
+        let dy = (self.local_to_canvas(self.anchor + vec2(0.0, 1.0)) - a).length();
+        (dx + dy) * 0.5
+    }
+
+    /// Camera distance of the anchor, for sorting 3D layers.
+    pub fn depth(&self) -> f32 {
+        self.projection
+            .depth(self.world.point(vec3(self.anchor.x, self.anchor.y, 0.0)))
     }
 }
 
-pub fn layer_geom(ctx: &Context, layer: &Layer, frame: f32) -> LayerGeom {
-    let t = &layer.transform;
+pub fn layer_geom(ctx: &Context, project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
     let size = match &layer.kind {
         LayerKind::Shape { size, .. } => size.sample(frame),
         LayerKind::Text { text, font_size } => {
             text_galley(ctx, text, *font_size, Color32::WHITE).size()
         }
         LayerKind::Image { size, .. } => *size,
+        LayerKind::Null => Vec2::splat(NULL_SIZE),
+        LayerKind::Camera { .. } => Vec2::ZERO,
     };
     LayerGeom {
-        position: t.position.sample(frame),
-        scale: t.scale.sample(frame),
-        rotation: t.rotation.sample(frame).to_radians(),
-        anchor: t.anchor,
+        world: project.world_matrix(layer, frame),
+        projection: project.projection_for(layer, frame.round() as i32),
         size,
+        anchor: layer.transform.anchor,
     }
 }
 
@@ -108,8 +138,11 @@ fn text_galley(ctx: &Context, text: &str, size: f32, color: Color32) -> Arc<Gall
 }
 
 /// Whether canvas point `p` lands on the layer at `frame`.
-pub fn hit_test(ctx: &Context, layer: &Layer, frame: f32, p: Vec2) -> bool {
-    let geom = layer_geom(ctx, layer, frame);
+pub fn hit_test(ctx: &Context, project: &Project, layer: &Layer, frame: f32, p: Vec2) -> bool {
+    if matches!(layer.kind, LayerKind::Camera { .. }) {
+        return false;
+    }
+    let geom = layer_geom(ctx, project, layer, frame);
     let Some(local) = geom.canvas_to_local(p) else {
         return false;
     };
@@ -128,14 +161,40 @@ pub fn hit_test(ctx: &Context, layer: &Layer, frame: f32, p: Vec2) -> bool {
     }
 }
 
-/// The front-most layer under canvas point `p`, ignoring locked layers.
-pub fn pick_layer(ctx: &Context, project: &Project, frame: i32, p: Vec2) -> Option<u64> {
-    project
+/// Active layers in paint order, back to front. Layers keep their stack
+/// order, except that each run of adjacent 3D layers is sorted by distance
+/// from the camera so nearer ones cover farther ones.
+pub fn paint_order<'a>(ctx: &Context, project: &'a Project, frame: i32) -> Vec<&'a Layer> {
+    let mut out: Vec<&Layer> = Vec::new();
+    let mut run: Vec<(f32, &Layer)> = Vec::new();
+    let flush = |run: &mut Vec<(f32, &'a Layer)>, out: &mut Vec<&'a Layer>| {
+        run.sort_by(|a, b| b.0.total_cmp(&a.0));
+        out.extend(run.drain(..).map(|(_, l)| l));
+    };
+    for layer in project
         .layers
         .iter()
+        .filter(|l| l.is_active_at(frame) && !matches!(l.kind, LayerKind::Camera { .. }))
+    {
+        if layer.three_d {
+            let depth = layer_geom(ctx, project, layer, frame as f32).depth();
+            run.push((depth, layer));
+        } else {
+            flush(&mut run, &mut out);
+            out.push(layer);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// The front-most layer under canvas point `p`, ignoring locked layers.
+pub fn pick_layer(ctx: &Context, project: &Project, frame: i32, p: Vec2) -> Option<u64> {
+    paint_order(ctx, project, frame)
+        .into_iter()
         .rev()
-        .filter(|l| l.is_active_at(frame) && !l.locked)
-        .find(|l| hit_test(ctx, l, frame as f32, p))
+        .filter(|l| !l.locked)
+        .find(|l| hit_test(ctx, project, l, frame as f32, p))
         .map(|l| l.id)
 }
 
@@ -227,34 +286,70 @@ pub fn load_image(path: &Path) -> Result<ColorImage, String> {
 }
 
 /// Paints the whole composition at `frame`: background, then layers bottom-up.
+/// `guides` also draws editor-only layers (nulls) as outlines.
 pub fn draw_project(
     painter: &Painter,
     view: View,
     project: &Project,
     frame: i32,
     textures: &mut TextureCache,
+    guides: bool,
 ) {
     let canvas = egui::Rect::from_min_size(
         view.origin,
         vec2(project.width as f32, project.height as f32) * view.zoom,
     );
     painter.rect_filled(canvas, 0.0, project.background.to_color32());
-    for layer in project.layers.iter().filter(|l| l.is_active_at(frame)) {
-        draw_layer(painter, view, layer, frame as f32, textures);
+    let ctx = painter.ctx();
+    for layer in paint_order(ctx, project, frame) {
+        let geom = layer_geom(ctx, project, layer, frame as f32);
+        if layer.kind.is_visual() {
+            draw_layer(painter, view, layer, &geom, frame as f32, textures);
+        } else if guides {
+            draw_null(painter, view, &geom);
+        }
     }
+}
+
+/// A null's box: a dashed square with a cross through its pivot.
+fn draw_null(painter: &Painter, view: View, geom: &LayerGeom) {
+    if !geom.in_front() {
+        return;
+    }
+    let to_screen = |p: Vec2| view.to_screen(geom.local_to_canvas(p));
+    let color = Color32::from_rgba_unmultiplied(230, 80, 90, 200);
+    let corners = geom.local_corners().map(to_screen);
+    for i in 0..4 {
+        painter.extend(Shape::dashed_line(
+            &[corners[i], corners[(i + 1) % 4]],
+            Stroke::new(1.5, color),
+            6.0,
+            4.0,
+        ));
+    }
+    let h = geom.size * 0.5;
+    let stroke = Stroke::new(1.0, color);
+    painter.line_segment(
+        [to_screen(vec2(-h.x, 0.0)), to_screen(vec2(h.x, 0.0))],
+        stroke,
+    );
+    painter.line_segment(
+        [to_screen(vec2(0.0, -h.y)), to_screen(vec2(0.0, h.y))],
+        stroke,
+    );
 }
 
 pub fn draw_layer(
     painter: &Painter,
     view: View,
     layer: &Layer,
+    geom: &LayerGeom,
     frame: f32,
     textures: &mut TextureCache,
 ) {
     let ctx = painter.ctx();
-    let geom = layer_geom(ctx, layer, frame);
     let opacity = layer.opacity.sample(frame).clamp(0.0, 1.0);
-    if opacity <= 0.0 {
+    if opacity <= 0.0 || !geom.in_front() {
         return;
     }
     let to_screen = |p: Vec2| view.to_screen(geom.local_to_canvas(p));
@@ -280,9 +375,10 @@ pub fn draw_layer(
             } else {
                 Stroke::NONE
             };
-            if matches!(shape, ShapeKind::Star { .. }) {
-                // Stars are concave, which egui's polygon fill doesn't support;
-                // a triangle fan from the centre fills them correctly.
+            if matches!(shape, ShapeKind::Star { .. }) || layer.three_d {
+                // Stars are concave, and a tilted 3D outline can flip its
+                // winding, neither of which egui's polygon fill supports; a
+                // triangle fan from the centre fills both correctly.
                 let mut mesh = Mesh::default();
                 mesh.colored_vertex(to_screen(Vec2::ZERO), fill);
                 for &p in &points {
@@ -293,47 +389,72 @@ pub fn draw_layer(
                     mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
                 }
                 painter.add(mesh);
-                if stroke.width > 0.0 {
-                    painter.add(Shape::closed_line(points, stroke));
-                }
+                // Meshes aren't anti-aliased; a hairline in the fill colour
+                // smooths the edge when there's no border to cover it.
+                let edge = if stroke.width > 0.0 {
+                    stroke
+                } else {
+                    Stroke::new(1.0, fill)
+                };
+                painter.add(Shape::closed_line(points, edge));
             } else {
                 painter.add(Shape::convex_polygon(points, fill, stroke));
             }
         }
         LayerKind::Text { text, font_size } => {
-            let screen_size = font_size * geom.average_scale() * view.zoom;
-            let galley = text_galley(ctx, text, screen_size, fill);
-            let center = to_screen(Vec2::ZERO);
-            // TextShape rotates around its top-left corner.
-            let pos = center - rotate(galley.size() * 0.5, geom.rotation);
-            let mut shape = TextShape::new(pos, galley, fill);
-            shape.angle = geom.rotation;
-            painter.add(shape);
+            // Lay the text out at roughly its on-screen size so glyphs stay
+            // sharp, then map each glyph vertex through the layer's
+            // transform; this handles rotation, parenting and perspective.
+            let raster = (font_size * geom.average_scale() * view.zoom).clamp(1.0, 1024.0);
+            let galley = text_galley(ctx, text, raster, fill);
+            let to_local = *font_size / raster;
+            let half = galley.size() * 0.5;
+            let shape = TextShape::new(Pos2::ZERO, galley, fill);
+            let mut mesh = Mesh::default();
+            let mut tessellator = Tessellator::new(
+                ctx.pixels_per_point(),
+                Default::default(),
+                ctx.fonts(|f| f.font_image_size()),
+                Vec::new(),
+            );
+            tessellator.tessellate_text(&shape, &mut mesh);
+            for v in &mut mesh.vertices {
+                v.pos = to_screen((v.pos.to_vec2() - half) * to_local);
+            }
+            painter.add(mesh);
         }
         LayerKind::Image { path, .. } => {
-            let corners = geom.local_corners().map(to_screen);
+            let corners = geom.local_corners();
             match textures.get(ctx, path) {
                 Some(texture) => {
+                    // Flat images need one quad; tilted ones are split into a
+                    // grid so the texture follows the perspective.
+                    let n: u32 = if layer.three_d { 12 } else { 1 };
                     let mut mesh = Mesh::with_texture(texture.id());
-                    let uvs = [
-                        Pos2::new(0.0, 0.0),
-                        Pos2::new(1.0, 0.0),
-                        Pos2::new(1.0, 1.0),
-                        Pos2::new(0.0, 1.0),
-                    ];
-                    for (pos, uv) in corners.into_iter().zip(uvs) {
-                        mesh.vertices.push(egui::epaint::Vertex {
-                            pos,
-                            uv,
-                            color: fill,
-                        });
+                    for j in 0..=n {
+                        for i in 0..=n {
+                            let uv = vec2(i as f32, j as f32) / n as f32;
+                            let local = corners[0] + uv * geom.size;
+                            mesh.vertices.push(Vertex {
+                                pos: to_screen(local),
+                                uv: uv.to_pos2(),
+                                color: fill,
+                            });
+                        }
                     }
-                    mesh.add_triangle(0, 1, 2);
-                    mesh.add_triangle(0, 2, 3);
+                    for j in 0..n {
+                        for i in 0..n {
+                            let a = j * (n + 1) + i;
+                            let b = a + n + 1;
+                            mesh.add_triangle(a, a + 1, b + 1);
+                            mesh.add_triangle(a, b + 1, b);
+                        }
+                    }
                     painter.add(mesh);
                 }
                 None => {
                     // Missing file: draw a placeholder so the layer stays visible.
+                    let corners = corners.map(to_screen);
                     let warn = Color32::from_rgb(200, 60, 90);
                     painter.add(Shape::convex_polygon(
                         corners.to_vec(),
@@ -345,28 +466,13 @@ pub fn draw_layer(
                 }
             }
         }
+        LayerKind::Null | LayerKind::Camera { .. } => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn local_canvas_round_trip() {
-        let geom = LayerGeom {
-            position: vec2(100.0, 50.0),
-            scale: vec2(2.0, 0.5),
-            rotation: 0.7,
-            anchor: vec2(10.0, -4.0),
-            size: vec2(40.0, 20.0),
-        };
-        let p = vec2(13.0, -7.0);
-        let back = geom.canvas_to_local(geom.local_to_canvas(p)).unwrap();
-        assert!((back - p).length() < 1e-4);
-        // The anchor point sits exactly on the position.
-        assert!((geom.local_to_canvas(geom.anchor) - geom.position).length() < 1e-4);
-    }
 
     #[test]
     fn outlines_have_expected_vertex_counts() {
