@@ -185,6 +185,13 @@ impl AetherApp {
                     layer.three_d = !layer.three_d;
                 }
             }
+            if matches!(layer.kind, LayerKind::Group) {
+                if icons::button(ui, Icon::Ungroup, "Ungroup (Ctrl+Shift+G)").clicked() {
+                    action = Some(LayerAction::Ungroup);
+                }
+            } else if icons::button(ui, Icon::Group, "Put in a new group (Ctrl+G)").clicked() {
+                action = Some(LayerAction::Group);
+            }
             if icons::button(ui, Icon::Up, "Bring forward").clicked() {
                 action = Some(LayerAction::Reorder(1));
             }
@@ -204,22 +211,26 @@ impl AetherApp {
         // Alight Motion groups a layer's settings.
         let is_shape = matches!(layer.kind, LayerKind::Shape { .. });
         let has_content = layer.kind.is_visual();
+        let is_group = matches!(layer.kind, LayerKind::Group);
         let page_id = egui::Id::new("inspector_page");
         let mut page = ui
             .data(|d| d.get_temp::<Page>(page_id))
             .unwrap_or(Page::Transform);
         if (page == Page::Border && !is_shape)
             || (matches!(page, Page::Content | Page::Fill | Page::Effects) && !has_content)
+            || (page == Page::Content && is_group)
         {
             page = Page::Transform;
         }
         let mut pages = vec![(Page::Transform, Icon::Transform, "Move")];
-        if has_content {
+        if has_content && !is_group {
             pages.push((
                 Page::Content,
                 theme::layer_icon(&layer.kind),
                 layer.kind.label(),
             ));
+        }
+        if has_content {
             pages.push((Page::Fill, Icon::Fill, "Color"));
         }
         if is_shape {
@@ -244,12 +255,22 @@ impl AetherApp {
 
         // Layers this one could be parented to: anything that isn't itself
         // or already one of its children.
-        let parent_choices: Vec<(u64, String)> = self
+        // Parents must share the layer's group.
+        let own_group = self.project.layer(id).and_then(|l| l.group);
+        let mut parent_choices: Vec<(u64, String)> = self
+            .project
+            .members(own_group)
+            .filter(|l| !self.project.is_ancestor(id, l.id))
+            .map(|l| (l.id, l.name.clone()))
+            .collect();
+        parent_choices.reverse();
+        // Groups this layer could move into: any group not inside it.
+        let group_choices: Vec<(u64, String)> = self
             .project
             .layers
             .iter()
             .rev()
-            .filter(|l| !self.project.is_ancestor(id, l.id))
+            .filter(|l| matches!(l.kind, LayerKind::Group) && !self.project.is_in_group(l.id, id))
             .map(|l| (l.id, l.name.clone()))
             .collect();
         let Some(layer) = self.project.layer_mut(id) else {
@@ -296,6 +317,37 @@ impl AetherApp {
                         .response
                         .on_hover_text("Follow another layer's move, scale and rotation");
                 });
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
+                    icons::paint(
+                        ui.painter(),
+                        icon_rect,
+                        Icon::Group,
+                        ui.visuals().weak_text_color(),
+                    );
+                    ui.label("Group");
+                    let current = layer.group.and_then(|g| {
+                        group_choices
+                            .iter()
+                            .find(|(id, _)| *id == g)
+                            .map(|(_, n)| n.as_str())
+                    });
+                    egui::ComboBox::from_id_salt("group")
+                        .selected_text(current.unwrap_or("None"))
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(layer.group.is_none(), "None").clicked() {
+                                action = Some(LayerAction::MoveToGroup(None));
+                            }
+                            for (gid, name) in &group_choices {
+                                if ui
+                                    .selectable_label(layer.group == Some(*gid), name)
+                                    .clicked()
+                                {
+                                    action = Some(LayerAction::MoveToGroup(Some(*gid)));
+                                }
+                            }
+                        });
+                });
             }
             Page::Content => match &mut layer.kind {
                 LayerKind::Shape {
@@ -323,10 +375,10 @@ impl AetherApp {
                     ui.label(format!("{} × {} px", size.x, size.y));
                     ui.label(RichText::new(path.display().to_string()).small().weak());
                 }
-                LayerKind::Null | LayerKind::Camera { .. } => {}
+                LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group => {}
             },
             Page::Fill => {
-                let is_image = matches!(layer.kind, LayerKind::Image { .. });
+                let is_image = !layer.kind.has_fill();
                 if !is_image {
                     ui.horizontal_wrapped(|ui| {
                         for style in FillStyle::ALL {
@@ -463,6 +515,11 @@ impl AetherApp {
             Some(LayerAction::Parent(parent)) => {
                 self.project.reparent_in_place(id, parent, frame);
             }
+            Some(LayerAction::MoveToGroup(group)) => {
+                self.project.move_to_group(id, group, frame);
+            }
+            Some(LayerAction::Group) => self.group_selected(),
+            Some(LayerAction::Ungroup) => self.ungroup_selected(),
             None => {}
         }
     }
@@ -484,6 +541,9 @@ enum LayerAction {
     Delete,
     Reorder(isize),
     Parent(Option<u64>),
+    MoveToGroup(Option<u64>),
+    Group,
+    Ungroup,
 }
 
 /// A rounded surface that groups a page of settings.

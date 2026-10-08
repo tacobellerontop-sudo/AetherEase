@@ -49,6 +49,9 @@ pub enum Icon {
     Cube,
     Link,
     Effects,
+    Group,
+    Ungroup,
+    Right,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -324,6 +327,25 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             sparkle(-0.15, 0.1, 0.55);
             sparkle(0.45, -0.45, 0.25);
         }
+        Icon::Group | Icon::Ungroup => {
+            // A folder.
+            let body = vec![
+                p(-0.65, -0.45),
+                p(-0.2, -0.45),
+                p(-0.05, -0.3),
+                p(0.65, -0.3),
+                p(0.65, 0.5),
+                p(-0.65, 0.5),
+            ];
+            painter.add(Shape::closed_line(body, stroke));
+            if icon == Icon::Ungroup {
+                line(&[p(-0.25, 0.1), p(0.25, 0.1)]);
+            } else {
+                line(&[p(-0.25, 0.1), p(0.25, 0.1)]);
+                line(&[p(0.0, -0.15), p(0.0, 0.35)]);
+            }
+        }
+        Icon::Right => line(&[p(-0.2, -0.45), p(0.25, 0.0), p(-0.2, 0.45)]),
         Icon::Link => {
             // Two chain links at an angle.
             for (x, y) in [(-0.22, 0.22), (0.22, -0.22)] {

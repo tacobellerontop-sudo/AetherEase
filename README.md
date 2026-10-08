@@ -39,6 +39,12 @@ grow into a real alternative to After Effects.
 - **One renderer for everything**: frames are composited on the CPU with
   tiny-skia, so the canvas, thumbnails and (soon) export match exactly. Text
   is drawn from glyph outlines, so it stays sharp under any transform.
+- **Groups**: Ctrl+G (or the folder button) puts a layer in a group; the
+  Move page's Group picker moves layers in and out, all without them moving
+  on screen. Groups fold open in the timeline, move their contents in time,
+  and have their own transform, opacity, blending and effects.
+- **Masking**: set a layer's blending to **Mask** to show the layers below it
+  in its group only where it is, or **Mask (inverted)** to cut it out.
 - **Null layers**: invisible layers (a dashed box in the editor, nothing in
   the output) that other layers can be parented to.
 - **Parenting**: pick a Parent on the Move page and the layer follows that
@@ -88,6 +94,7 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | ← / → | Previous / next frame |
 | Home / End | First / last frame |
 | Delete | Delete the selected keyframe, or the selected layer |
+| Ctrl+G / Ctrl+Shift+G | Group / ungroup |
 | Ctrl+D | Duplicate layer |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | Undo, redo |
 | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S | New project, open, save, save as |
@@ -98,6 +105,7 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | Path | What it holds |
 |---|---|
 | `src/model/anim.rs` | `Animated<T>` values, keyframes, easing |
+| `src/model/groups.rs` | Grouping, ungrouping and moving layers between groups in place |
 | `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
 | `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |

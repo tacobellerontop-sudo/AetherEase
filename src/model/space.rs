@@ -262,17 +262,31 @@ pub fn local_matrix(layer: &Layer, frame: f32) -> Affine3 {
 }
 
 impl Project {
-    /// The parent's world transform (identity for top-level layers).
+    /// The transform from the layer's parent space to world space: its parent
+    /// chain, then the group it belongs to (identity for top-level layers).
     pub fn parent_matrix(&self, layer: &Layer, frame: f32) -> Affine3 {
+        self.parent_matrix_depth(layer, frame, 0)
+    }
+
+    fn parent_matrix_depth(&self, layer: &Layer, frame: f32, depth: usize) -> Affine3 {
         let mut m = Affine3::IDENTITY;
-        let mut next = layer.parent;
         // Bounded so a loop in a hand-edited file can't hang the app.
+        if depth > self.layers.len() {
+            return m;
+        }
+        let mut next = layer.parent;
         for _ in 0..self.layers.len() {
             let Some(parent) = next.and_then(|id| self.layer(id)) else {
                 break;
             };
             m = local_matrix(parent, frame).then_after(&m);
             next = parent.parent;
+        }
+        if let Some(group) = layer.group.and_then(|g| self.layer(g)) {
+            let group_world = self
+                .parent_matrix_depth(group, frame, depth + 1)
+                .then_after(&local_matrix(group, frame));
+            m = group_world.then_after(&m);
         }
         m
     }
@@ -335,41 +349,9 @@ impl Project {
     }
 
     /// Parents `id` to `parent` (or unparents it) without moving it on screen
-    /// at `frame`: its position is re-expressed in the new parent's space.
-    /// Animated positions shift every key by the same amount.
+    /// at `frame`.
     pub fn reparent_in_place(&mut self, id: u64, parent: Option<u64>, frame: i32) -> bool {
-        let f = frame as f32;
-        let Some(layer) = self.layer(id) else {
-            return false;
-        };
-        let old_parent = self.parent_matrix(layer, f);
-        let t = &layer.transform;
-        let p = t.position.sample(f);
-        let z = if layer.is_3d() { t.z.sample(f) } else { 0.0 };
-        let world = old_parent.point(vec3(p.x, p.y, z));
-        if !self.set_parent(id, parent) {
-            return false;
-        }
-        let layer = self.layer(id).expect("checked above");
-        let Some(inv) = self.parent_matrix(layer, f).inverse() else {
-            return true;
-        };
-        let local = inv.point(world);
-        let three_d = layer.is_3d();
-        let layer = self.layer_mut(id).expect("checked above");
-        let delta = local.xy() - p;
-        shift_track(&mut layer.transform.position, delta);
-        if three_d {
-            shift_track(&mut layer.transform.z, local.z - z);
-        }
-        true
-    }
-}
-
-fn shift_track<T: super::anim::Lerp + Add<Output = T>>(track: &mut super::Animated<T>, delta: T) {
-    track.value = track.value + delta;
-    for key in &mut track.keyframes {
-        key.value = key.value + delta;
+        self.keeping_place(id, frame, |project| project.set_parent(id, parent))
     }
 }
 

@@ -7,12 +7,14 @@ use crate::model::ShapeKind;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
-const SHORTCUTS: [(&str, &str); 11] = [
+const SHORTCUTS: [(&str, &str); 13] = [
     ("Space", "Play / pause"),
     ("← / →", "Previous / next frame"),
     ("Home / End", "First / last frame"),
     ("Delete", "Delete layer or keyframe"),
     ("Ctrl+D", "Duplicate layer"),
+    ("Ctrl+G", "Put the layer in a new group"),
+    ("Ctrl+Shift+G", "Ungroup"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+S", "Save"),
     ("Ctrl+N", "New project"),

@@ -6,7 +6,7 @@ use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 
 use crate::compose::{self, Assets};
 use crate::history::History;
-use crate::model::{Project, ProjectSettings, ShapeKind};
+use crate::model::{LayerKind, Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
 
@@ -170,6 +170,31 @@ impl AetherApp {
             }
         } else if let Some(id) = self.selected.take() {
             self.project.remove_layer(id);
+        }
+    }
+
+    pub fn group_selected(&mut self) {
+        if let Some(id) = self.selected
+            && !matches!(
+                self.project.layer(id).map(|l| &l.kind),
+                Some(LayerKind::Group)
+            )
+            && let Some(group) = self.project.group_layer(id, self.frame)
+        {
+            self.select(Some(group));
+        }
+    }
+
+    pub fn ungroup_selected(&mut self) {
+        if let Some(id) = self.selected
+            && matches!(
+                self.project.layer(id).map(|l| &l.kind),
+                Some(LayerKind::Group)
+            )
+        {
+            let first = self.project.members(Some(id)).last().map(|l| l.id);
+            self.project.ungroup(id, self.frame);
+            self.select(first);
         }
     }
 
@@ -419,6 +444,12 @@ impl AetherApp {
         }
         if shortcut(ctrl(Key::D)) {
             self.duplicate_selected();
+        }
+        if shortcut(ctrl_shift(Key::G)) {
+            self.ungroup_selected();
+        }
+        if shortcut(ctrl(Key::G)) {
+            self.group_selected();
         }
         let key = |k| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
         if key(Key::Space) {

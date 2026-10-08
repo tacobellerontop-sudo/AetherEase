@@ -24,6 +24,8 @@ pub struct TimelineState {
     /// First visible frame (fractional) when zoomed in.
     pub scroll_frame: f32,
     drag: Option<TimelineDrag>,
+    /// Groups whose contents are folded away.
+    pub collapsed: std::collections::HashSet<u64>,
 }
 
 /// An in-progress drag. Tracked here instead of on a widget response so a
@@ -256,10 +258,8 @@ impl AetherApp {
                 applied,
             } => {
                 let delta = frame - origin;
-                if delta != applied
-                    && let Some(layer) = self.project.layer_mut(id)
-                {
-                    layer.shift_in_time(delta - applied);
+                if delta != applied && self.project.layer(id).is_some() {
+                    self.project.shift_layer_in_time(id, delta - applied);
                     self.timeline.drag = Some(TimelineDrag::MoveLayer {
                         id,
                         origin,
@@ -399,7 +399,8 @@ impl AetherApp {
     }
 
     fn rows_ui(&mut self, ui: &mut Ui, scale: TimeScale) {
-        let rows: Vec<u64> = self.project.layers.iter().rev().map(|l| l.id).collect();
+        let mut rows = Vec::new();
+        self.collect_rows(None, 0, &mut rows);
         let content_height = rows.len() as f32 * LAYER_ROW;
 
         let size = vec2(
@@ -444,7 +445,7 @@ impl AetherApp {
         }
 
         let mut y = rect.top();
-        for &id in &rows {
+        for &(id, depth) in &rows {
             let row_rect = Rect::from_x_y_ranges(rect.x_range(), y..=y + LAYER_ROW);
             self.layer_row(
                 ui,
@@ -454,6 +455,7 @@ impl AetherApp {
                 row_rect,
                 scale,
                 id,
+                depth,
             );
             y += LAYER_ROW;
         }
@@ -468,6 +470,21 @@ impl AetherApp {
         }
     }
 
+    /// Timeline rows, front-most first, with each group's contents (unless
+    /// folded) right under it, one level deeper.
+    fn collect_rows(&self, group: Option<u64>, depth: usize, out: &mut Vec<(u64, usize)>) {
+        let members: Vec<&crate::model::Layer> = self.project.members(group).collect();
+        for layer in members.into_iter().rev() {
+            out.push((layer.id, depth));
+            if matches!(layer.kind, crate::model::LayerKind::Group)
+                && !self.timeline.collapsed.contains(&layer.id)
+                && depth < 16
+            {
+                self.collect_rows(Some(layer.id), depth + 1, out);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn layer_row(
         &mut self,
@@ -478,10 +495,12 @@ impl AetherApp {
         row: Rect,
         scale: TimeScale,
         id: u64,
+        depth: usize,
     ) {
         let Some(layer) = self.project.layer(id) else {
             return;
         };
+        let is_group = matches!(layer.kind, crate::model::LayerKind::Group);
         let selected = self.selected == Some(id);
         let (visible, locked) = (layer.visible, layer.locked);
         let color = theme::layer_color(&layer.kind);
@@ -519,7 +538,26 @@ impl AetherApp {
         } else {
             ui.visuals().weak_text_color()
         };
-        let mut x = row.left() + 6.0;
+        let mut x = row.left() + 6.0 + depth as f32 * 14.0;
+        if is_group {
+            // Fold / unfold the group's rows.
+            let folded = self.timeline.collapsed.contains(&id);
+            let r = Rect::from_center_size(Pos2::new(x + 8.0, row.center().y), Vec2::splat(18.0));
+            let response = ui
+                .interact(r, Id::new(("fold", id)), Sense::click())
+                .on_hover_cursor(CursorIcon::PointingHand);
+            let c = if response.hovered() {
+                Color32::WHITE
+            } else {
+                ui.visuals().text_color()
+            };
+            let glyph = if folded { Icon::Right } else { Icon::Down };
+            icons::paint(painter, r.shrink(4.0), glyph, c);
+            if response.clicked() && !self.timeline.collapsed.remove(&id) {
+                self.timeline.collapsed.insert(id);
+            }
+        }
+        x += 16.0;
         let mut small_button =
             |ui: &mut Ui, glyph: Icon, salt: &str, active: bool, always: bool| {
                 let r =

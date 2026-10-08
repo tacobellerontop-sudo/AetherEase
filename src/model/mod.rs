@@ -2,6 +2,7 @@
 
 pub mod anim;
 pub mod effects;
+pub mod groups;
 pub mod space;
 
 use std::path::PathBuf;
@@ -103,6 +104,10 @@ pub enum LayerKind {
     },
     /// An invisible layer that other layers can be parented to.
     Null,
+    /// Holds other layers (those whose `group` is this layer's id). They move
+    /// with the group and are composited together before the group's own
+    /// opacity, blending and effects apply, which is also what masks clip.
+    Group,
     /// Views 3D layers in perspective. Its transform places the camera; the
     /// top-most active camera is the one used.
     Camera {
@@ -117,12 +122,18 @@ impl LayerKind {
         !matches!(self, LayerKind::Null | LayerKind::Camera { .. })
     }
 
+    /// Whether the layer can have a fill colour (shapes and text).
+    pub fn has_fill(&self) -> bool {
+        matches!(self, LayerKind::Shape { .. } | LayerKind::Text { .. })
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             LayerKind::Shape { .. } => "Shape",
             LayerKind::Text { .. } => "Text",
             LayerKind::Image { .. } => "Image",
             LayerKind::Null => "Null",
+            LayerKind::Group => "Group",
             LayerKind::Camera { .. } => "Camera",
         }
     }
@@ -186,11 +197,17 @@ pub enum BlendMode {
     Saturation,
     Color,
     Luminosity,
+    /// Keeps what's below (in the same group) only where this layer is.
+    Mask,
+    /// Hides what's below (in the same group) where this layer is.
+    MaskInvert,
 }
 
 impl BlendMode {
-    pub const ALL: [BlendMode; 17] = [
+    pub const ALL: [BlendMode; 19] = [
         BlendMode::Normal,
+        BlendMode::Mask,
+        BlendMode::MaskInvert,
         BlendMode::Multiply,
         BlendMode::Screen,
         BlendMode::Overlay,
@@ -228,6 +245,8 @@ impl BlendMode {
             BlendMode::Saturation => "Saturation",
             BlendMode::Color => "Color",
             BlendMode::Luminosity => "Luminosity",
+            BlendMode::Mask => "Mask",
+            BlendMode::MaskInvert => "Mask (inverted)",
         }
     }
 }
@@ -301,6 +320,9 @@ pub struct Layer {
     /// The layer whose transform this layer follows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<u64>,
+    /// The group layer this layer belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u64>,
     /// Whether the layer lives in 3D space (depth, X/Y rotation, camera).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub three_d: bool,
@@ -363,6 +385,7 @@ impl Layer {
                 color: Animated::new(Color::BLACK),
             },
             parent: None,
+            group: None,
             three_d: false,
         }
     }
@@ -395,7 +418,7 @@ impl Layer {
                 props.push(PropId::CameraZoom);
                 return props;
             }
-            LayerKind::Image { .. } => props.push(PropId::Opacity),
+            LayerKind::Image { .. } | LayerKind::Group => props.push(PropId::Opacity),
             LayerKind::Shape { .. } | LayerKind::Text { .. } => {
                 props.extend([PropId::Opacity, PropId::Fill]);
                 match self.fill_style {
@@ -740,9 +763,11 @@ impl Project {
     }
 
     /// Parents `id` to `parent`, refusing anything that would form a loop.
+    /// Both layers must be in the same group.
     pub fn set_parent(&mut self, id: u64, parent: Option<u64>) -> bool {
+        let group = self.layer(id).and_then(|l| l.group);
         if let Some(p) = parent
-            && (self.layer(p).is_none() || self.is_ancestor(id, p))
+            && (self.layer(p).is_none_or(|p| p.group != group) || self.is_ancestor(id, p))
         {
             return false;
         }
@@ -767,32 +792,71 @@ impl Project {
         self.layers.iter().position(|l| l.id == id)
     }
 
+    /// Removes a layer; a group goes with everything in it.
     pub fn remove_layer(&mut self, id: u64) {
-        self.layers.retain(|l| l.id != id);
+        let doomed: Vec<u64> = self
+            .layers
+            .iter()
+            .filter(|l| self.is_in_group(l.id, id))
+            .map(|l| l.id)
+            .collect();
+        self.layers.retain(|l| !doomed.contains(&l.id));
         for layer in &mut self.layers {
-            if layer.parent == Some(id) {
+            if layer.parent.is_some_and(|p| doomed.contains(&p)) {
                 layer.parent = None;
             }
         }
     }
 
     /// Duplicates a layer directly above the original; returns the copy's id.
+    /// A group is copied with everything in it.
     pub fn duplicate_layer(&mut self, id: u64) -> Option<u64> {
         let index = self.index_of(id)?;
-        let mut copy = self.layers[index].clone();
-        copy.id = self.alloc_id();
-        copy.name = format!("{} copy", copy.name);
-        let new_id = copy.id;
-        self.layers.insert(index + 1, copy);
-        Some(new_id)
+        // The layer and, for groups, its contents, in stack order.
+        let originals: Vec<Layer> = self
+            .layers
+            .iter()
+            .filter(|l| self.is_in_group(l.id, id))
+            .cloned()
+            .collect();
+        let mut ids = std::collections::HashMap::new();
+        for layer in &originals {
+            ids.insert(layer.id, self.alloc_id());
+        }
+        let mut insert_at = index + 1;
+        for mut copy in originals {
+            copy.id = ids[&copy.id];
+            // Links inside the copied set point at the copies.
+            copy.parent = copy.parent.map(|p| *ids.get(&p).unwrap_or(&p));
+            copy.group = copy.group.map(|g| *ids.get(&g).unwrap_or(&g));
+            if copy.id == ids[&id] {
+                copy.name = format!("{} copy", copy.name);
+                self.layers.insert(insert_at, copy);
+                insert_at += 1;
+            } else {
+                self.layers.push(copy);
+            }
+        }
+        Some(ids[&id])
     }
 
-    /// Moves a layer up (towards the front, `delta > 0`) or down the stack.
+    /// Moves a layer up (towards the front, `delta > 0`) or down among the
+    /// layers that share its group.
     pub fn reorder_layer(&mut self, id: u64, delta: isize) {
-        if let Some(index) = self.index_of(id) {
-            let target = (index as isize + delta).clamp(0, self.layers.len() as isize - 1) as usize;
+        let Some(index) = self.index_of(id) else {
+            return;
+        };
+        let group = self.layers[index].group;
+        let siblings: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| self.layers[i].group == group)
+            .collect();
+        let Some(pos) = siblings.iter().position(|&i| i == index) else {
+            return;
+        };
+        let target = (pos as isize + delta).clamp(0, siblings.len() as isize - 1) as usize;
+        if target != pos {
             let layer = self.layers.remove(index);
-            self.layers.insert(target, layer);
+            self.layers.insert(siblings[target], layer);
         }
     }
 

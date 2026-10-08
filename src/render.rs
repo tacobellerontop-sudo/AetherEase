@@ -34,6 +34,8 @@ pub struct LayerGeom {
     pub projection: Projection,
     /// Untransformed size of the layer's content.
     pub size: Vec2,
+    /// Centre of the content box in layer pixels; only groups are off-centre.
+    pub center: Vec2,
     pub anchor: Vec2,
 }
 
@@ -75,12 +77,12 @@ impl LayerGeom {
 
     /// Bounding box corners in layer-local pixels, clockwise from top-left.
     pub fn local_corners(&self) -> [Vec2; 4] {
-        let h = self.size * 0.5;
+        let (h, c) = (self.size * 0.5, self.center);
         [
-            vec2(-h.x, -h.y),
-            vec2(h.x, -h.y),
-            vec2(h.x, h.y),
-            vec2(-h.x, h.y),
+            c + vec2(-h.x, -h.y),
+            c + vec2(h.x, -h.y),
+            c + vec2(h.x, h.y),
+            c + vec2(-h.x, h.y),
         ]
     }
 
@@ -100,19 +102,69 @@ impl LayerGeom {
 }
 
 pub fn layer_geom(project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
-    let size = match &layer.kind {
-        LayerKind::Shape { size, .. } => size.sample(frame),
-        LayerKind::Text { text, font_size } => text::layout(text, *font_size).size,
-        LayerKind::Image { size, .. } => *size,
-        LayerKind::Null => Vec2::splat(NULL_SIZE),
-        LayerKind::Camera { .. } => Vec2::ZERO,
+    let world = project.world_matrix(layer, frame);
+    let (size, center) = match &layer.kind {
+        LayerKind::Shape { size, .. } => (size.sample(frame), Vec2::ZERO),
+        LayerKind::Text { text, font_size } => (text::layout(text, *font_size).size, Vec2::ZERO),
+        LayerKind::Image { size, .. } => (*size, Vec2::ZERO),
+        LayerKind::Null => (Vec2::splat(NULL_SIZE), Vec2::ZERO),
+        LayerKind::Camera { .. } => (Vec2::ZERO, Vec2::ZERO),
+        LayerKind::Group => group_bounds(project, layer, &world, frame, 0)
+            .map_or((Vec2::ZERO, layer.transform.anchor), |r| {
+                (r.size(), r.center().to_vec2())
+            }),
     };
     LayerGeom {
-        world: project.world_matrix(layer, frame),
+        world,
         projection: project.projection_for(layer, frame.round() as i32),
         size,
+        center,
         anchor: layer.transform.anchor,
     }
+}
+
+/// The box around a group's contents, in the group's own pixels.
+fn group_bounds(
+    project: &Project,
+    group: &Layer,
+    group_world: &Affine3,
+    frame: f32,
+    depth: usize,
+) -> Option<egui::Rect> {
+    let inv = group_world.inverse()?;
+    if depth > project.layers.len() {
+        return None;
+    }
+    let mut rect: Option<egui::Rect> = None;
+    for member in project
+        .members(Some(group.id))
+        .filter(|l| l.kind.is_visual() && project.is_shown_at(l, frame as i32))
+    {
+        let world = project.world_matrix(member, frame);
+        let corners: Vec<Vec2> = match member.kind {
+            LayerKind::Group => {
+                let Some(r) = group_bounds(project, member, &world, frame, depth + 1) else {
+                    continue;
+                };
+                [
+                    r.left_top(),
+                    r.right_top(),
+                    r.right_bottom(),
+                    r.left_bottom(),
+                ]
+                .map(|p| p.to_vec2())
+                .to_vec()
+            }
+            _ => layer_geom(project, member, frame).local_corners().to_vec(),
+        };
+        for c in corners {
+            let p = inv.point(world.point(vec3(c.x, c.y, 0.0))).xy().to_pos2();
+            rect = Some(rect.map_or(egui::Rect::from_min_max(p, p), |r| {
+                r.union(egui::Rect::from_min_max(p, p))
+            }));
+        }
+    }
+    rect
 }
 
 /// Whether canvas point `p` lands on the layer at `frame`.
@@ -120,10 +172,17 @@ pub fn hit_test(project: &Project, layer: &Layer, frame: f32, p: Vec2) -> bool {
     if matches!(layer.kind, LayerKind::Camera { .. }) {
         return false;
     }
+    if matches!(layer.kind, LayerKind::Group) {
+        // A group is hit where any of its contents is.
+        return stack(project, Some(layer.id), frame as i32)
+            .into_iter()
+            .any(|m| hit_test(project, m, frame, p));
+    }
     let geom = layer_geom(project, layer, frame);
     let Some(local) = geom.canvas_to_local(p) else {
         return false;
     };
+    let local = local - geom.center;
     let h = geom.size * 0.5;
     match &layer.kind {
         LayerKind::Shape {
@@ -139,10 +198,11 @@ pub fn hit_test(project: &Project, layer: &Layer, frame: f32, p: Vec2) -> bool {
     }
 }
 
-/// Active layers in paint order, back to front. Layers keep their stack
-/// order, except that each run of adjacent 3D layers is sorted by distance
-/// from the camera so nearer ones cover farther ones.
-pub fn paint_order<'a>(project: &'a Project, frame: i32) -> Vec<&'a Layer> {
+/// The active layers directly in `group` (or at the top level), in paint
+/// order, back to front. Layers keep their stack order, except that each run
+/// of adjacent 3D layers is sorted by distance from the camera so nearer ones
+/// cover farther ones.
+pub fn stack<'a>(project: &'a Project, group: Option<u64>, frame: i32) -> Vec<&'a Layer> {
     let mut out: Vec<&Layer> = Vec::new();
     let mut run: Vec<(f32, &Layer)> = Vec::new();
     let flush = |run: &mut Vec<(f32, &'a Layer)>, out: &mut Vec<&'a Layer>| {
@@ -150,8 +210,7 @@ pub fn paint_order<'a>(project: &'a Project, frame: i32) -> Vec<&'a Layer> {
         out.extend(run.drain(..).map(|(_, l)| l));
     };
     for layer in project
-        .layers
-        .iter()
+        .members(group)
         .filter(|l| l.is_active_at(frame) && !matches!(l.kind, LayerKind::Camera { .. }))
     {
         if layer.three_d {
@@ -167,8 +226,9 @@ pub fn paint_order<'a>(project: &'a Project, frame: i32) -> Vec<&'a Layer> {
 }
 
 /// The front-most layer under canvas point `p`, ignoring locked layers.
+/// Clicking on a group's contents picks the group.
 pub fn pick_layer(project: &Project, frame: i32, p: Vec2) -> Option<u64> {
-    paint_order(project, frame)
+    stack(project, None, frame)
         .into_iter()
         .rev()
         .filter(|l| !l.locked)
@@ -233,7 +293,7 @@ pub fn draw_guides(painter: &Painter, view: View, project: &Project, frame: i32)
     for layer in project
         .layers
         .iter()
-        .filter(|l| l.is_active_at(frame) && matches!(l.kind, LayerKind::Null))
+        .filter(|l| matches!(l.kind, LayerKind::Null) && project.is_shown_at(l, frame))
     {
         draw_null(painter, view, &layer_geom(project, layer, frame as f32));
     }

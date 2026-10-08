@@ -64,50 +64,80 @@ pub fn load_image(path: &Path) -> Result<Pixmap, String> {
 pub fn render(project: &Project, frame: i32, scale: f32, assets: &mut Assets) -> Pixmap {
     let w = ((project.width as f32 * scale).round() as u32).max(1);
     let h = ((project.height as f32 * scale).round() as u32).max(1);
+    let mut layers = Pixmap::new(w, h).expect("non-zero size");
+    render_stack(&mut layers, project, None, frame, scale, assets);
+    // The background goes underneath last, so a top-level mask reveals it
+    // rather than cutting holes in it.
     let mut out = Pixmap::new(w, h).expect("non-zero size");
     out.fill(color(project.background, 1.0));
-    let mut scratch: Option<Pixmap> = None;
-    for layer in render::paint_order(project, frame) {
+    out.draw_pixmap(
+        0,
+        0,
+        layers.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    out
+}
+
+/// Composites the layers directly in `group` (or the top level) onto `out`,
+/// recursing into nested groups.
+fn render_stack(
+    out: &mut Pixmap,
+    project: &Project,
+    group: Option<u64>,
+    frame: i32,
+    scale: f32,
+    assets: &mut Assets,
+) {
+    let (w, h) = (out.width(), out.height());
+    for layer in render::stack(project, group, frame) {
         if !layer.kind.is_visual() {
             continue;
         }
         let f = frame as f32;
         let geom = render::layer_geom(project, layer, f);
         let opacity = layer.opacity.sample(f).clamp(0.0, 1.0);
-        if opacity <= 0.0 || !geom.in_front() {
+        let is_group = matches!(layer.kind, LayerKind::Group);
+        if opacity <= 0.0 || (!is_group && !geom.in_front()) {
             continue;
         }
         let to_px = |p: Vec2| geom.local_to_canvas(p) * scale;
         let has_border = matches!(layer.kind, LayerKind::Shape { .. }) && layer.border.enabled;
+        let has_effects = layer.effects.iter().any(|e| e.enabled);
         // A partly transparent layer with a border must be flattened first,
         // or the fill would show through the border.
-        let has_effects = layer.effects.iter().any(|e| e.enabled);
-        let direct =
-            layer.blend == BlendMode::Normal && !has_effects && (opacity >= 1.0 || !has_border);
+        let direct = !is_group
+            && layer.blend == BlendMode::Normal
+            && !has_effects
+            && (opacity >= 1.0 || !has_border);
         if direct {
-            draw_layer(&mut out, layer, &geom, f, scale, opacity, assets, &to_px);
-        } else {
-            let tmp = scratch.get_or_insert_with(|| Pixmap::new(w, h).expect("non-zero size"));
-            tmp.fill(tiny_skia::Color::TRANSPARENT);
-            draw_layer(tmp, layer, &geom, f, scale, 1.0, assets, &to_px);
-            // Effects work in layer pixels, so they grow and shrink with the
-            // layer's scale and the zoom.
-            apply_effects(tmp, layer, f, geom.average_scale() * scale);
-            out.draw_pixmap(
-                0,
-                0,
-                tmp.as_ref(),
-                &PixmapPaint {
-                    opacity,
-                    blend_mode: blend_mode(layer.blend),
-                    quality: FilterQuality::Nearest,
-                },
-                Transform::identity(),
-                None,
-            );
+            draw_layer(out, layer, &geom, f, scale, opacity, assets, &to_px);
+            continue;
         }
+        let mut image = Pixmap::new(w, h).expect("non-zero size");
+        if is_group {
+            render_stack(&mut image, project, Some(layer.id), frame, scale, assets);
+        } else {
+            draw_layer(&mut image, layer, &geom, f, scale, 1.0, assets, &to_px);
+        }
+        // Effects work in layer pixels, so they grow and shrink with the
+        // layer's scale and the zoom.
+        apply_effects(&mut image, layer, f, geom.average_scale() * scale);
+        out.draw_pixmap(
+            0,
+            0,
+            image.as_ref(),
+            &PixmapPaint {
+                opacity,
+                blend_mode: blend_mode(layer.blend),
+                quality: FilterQuality::Nearest,
+            },
+            Transform::identity(),
+            None,
+        );
     }
-    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -201,7 +231,7 @@ fn draw_layer(
                 }
             }
         }
-        LayerKind::Null | LayerKind::Camera { .. } => {}
+        LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group => {}
     }
 }
 
@@ -556,6 +586,9 @@ fn blend_mode(mode: BlendMode) -> tiny_skia::BlendMode {
         BlendMode::Saturation => B::Saturation,
         BlendMode::Color => B::Color,
         BlendMode::Luminosity => B::Luminosity,
+        // Masks keep or remove what's already been drawn below them.
+        BlendMode::Mask => B::DestinationIn,
+        BlendMode::MaskInvert => B::DestinationOut,
     }
 }
 
@@ -676,6 +709,46 @@ mod tests {
         // The square itself still covers its shadow.
         let [r, g, b, _] = pixel(&out, 240, 135);
         assert!(b > 200 && r < 150 && g > 100, "{r} {g} {b}");
+    }
+
+    #[test]
+    fn masks_clip_only_inside_their_group() {
+        let mut project = Project {
+            background: Color::BLACK,
+            ..Project::default()
+        };
+        // A wide red bar, masked by a small square above it in a group.
+        let bar = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(bar).unwrap();
+        layer.fill.value = Color::new(1.0, 0.0, 0.0, 1.0);
+        if let LayerKind::Shape { size, .. } = &mut layer.kind {
+            size.value = vec2(1600.0, 200.0);
+        }
+        let mask = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(mask).unwrap();
+        layer.blend = BlendMode::Mask;
+        if let LayerKind::Shape { size, .. } = &mut layer.kind {
+            size.value = vec2(200.0, 200.0);
+        }
+        let group = project.group_layer(bar, 0).unwrap();
+        project.move_to_group(mask, Some(group), 0);
+        // Outside the group, a green layer underneath isn't affected.
+        let under = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(under).unwrap();
+        layer.fill.value = Color::new(0.0, 1.0, 0.0, 1.0);
+        if let LayerKind::Shape { size, .. } = &mut layer.kind {
+            size.value = vec2(1000.0, 400.0);
+        }
+        project.reorder_layer(under, -10);
+
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        // Inside the mask: the red bar.
+        assert_eq!(pixel(&out, 240, 135), [255, 0, 0, 255]);
+        // Bar outside the mask is cut away, revealing green below...
+        let x = (960.0 - 200.0) * 0.25;
+        assert_eq!(pixel(&out, x as u32, 135), [0, 255, 0, 255]);
+        // ...and further out, where there's no green, the background.
+        assert_eq!(pixel(&out, (300.0 * 0.25) as u32, 135), [0, 0, 0, 255]);
     }
 
     #[test]
