@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 
+use crate::audio::{self, AudioEngine, Waveforms};
 use crate::compose::{self, Assets};
 use crate::history::History;
 use crate::model::{LayerKind, Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
+use crate::ui::export_dialog::ExportDialog;
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
 
 pub const PROJECT_EXTENSION: &str = "aether";
@@ -61,6 +63,12 @@ pub struct AetherApp {
     play_clock: f32,
 
     pub assets: Assets,
+    pub audio: AudioEngine,
+    pub waveforms: Waveforms,
+    /// Set when playback must (re)start the audio from the playhead.
+    audio_dirty: bool,
+    /// The export dialog, while it is open.
+    pub export: Option<ExportDialog>,
     pub viewport: ViewportState,
     pub timeline: TimelineState,
 
@@ -91,6 +99,10 @@ impl AetherApp {
             looping: true,
             play_clock: 0.0,
             assets: Assets::default(),
+            audio: AudioEngine::default(),
+            waveforms: Waveforms::default(),
+            audio_dirty: false,
+            export: None,
             viewport: ViewportState::default(),
             timeline: TimelineState::default(),
             status: None,
@@ -113,7 +125,12 @@ impl AetherApp {
     }
 
     pub fn set_frame(&mut self, frame: i32) {
-        self.frame = frame.clamp(0, (self.project.duration - 1).max(0));
+        let frame = frame.clamp(0, (self.project.duration - 1).max(0));
+        if frame != self.frame {
+            self.frame = frame;
+            // A jump during playback restarts the sound from the new spot.
+            self.audio_dirty = true;
+        }
     }
 
     pub fn select(&mut self, id: Option<u64>) {
@@ -445,6 +462,9 @@ impl AetherApp {
         if shortcut(ctrl(Key::D)) {
             self.duplicate_selected();
         }
+        if shortcut(ctrl(Key::E)) {
+            self.open_export();
+        }
         if shortcut(ctrl_shift(Key::G)) {
             self.ungroup_selected();
         }
@@ -478,8 +498,38 @@ impl AetherApp {
     pub fn toggle_playback(&mut self) {
         self.playing = !self.playing;
         self.play_clock = 0.0;
+        self.audio_dirty = true;
         if self.playing && self.frame >= self.project.duration - 1 {
             self.frame = 0;
+        }
+    }
+
+    /// Keeps the sound in step with playback.
+    fn sync_audio(&mut self) {
+        if !self.playing || self.screen != Screen::Editor {
+            self.audio.stop();
+        } else if self.audio_dirty {
+            self.audio.play_from(&self.project, self.frame);
+        }
+        self.audio_dirty = false;
+    }
+
+    pub fn import_audio(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Audio", &audio::EXTENSIONS)
+            .pick_file()
+        else {
+            return;
+        };
+        match audio::analyse(&path) {
+            Ok(waveform) => {
+                let id = self
+                    .project
+                    .add_audio(path.clone(), waveform.seconds, self.frame);
+                self.waveforms.insert(&path, waveform);
+                self.select(Some(id));
+            }
+            Err(err) => self.status = Some(format!("Couldn't import {}: {err}", path.display())),
         }
     }
 
@@ -495,6 +545,7 @@ impl AetherApp {
             if self.frame >= self.project.duration {
                 if self.looping {
                     self.frame = 0;
+                    self.audio_dirty = true;
                 } else {
                     self.frame = self.project.duration - 1;
                     self.playing = false;
@@ -582,7 +633,9 @@ impl eframe::App for AetherApp {
                 self.autosave(&ctx);
             }
         }
+        self.sync_audio();
         self.new_project_dialog(&ctx);
+        self.export_dialog(&ctx);
         self.update_title(&ctx);
     }
 }

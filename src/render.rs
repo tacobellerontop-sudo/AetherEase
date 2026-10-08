@@ -108,7 +108,7 @@ pub fn layer_geom(project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
         LayerKind::Text { text, font_size } => (text::layout(text, *font_size).size, Vec2::ZERO),
         LayerKind::Image { size, .. } => (*size, Vec2::ZERO),
         LayerKind::Null => (Vec2::splat(NULL_SIZE), Vec2::ZERO),
-        LayerKind::Camera { .. } => (Vec2::ZERO, Vec2::ZERO),
+        LayerKind::Camera { .. } | LayerKind::Audio { .. } => (Vec2::ZERO, Vec2::ZERO),
         LayerKind::Group => group_bounds(project, layer, &world, frame, 0)
             .map_or((Vec2::ZERO, layer.transform.anchor), |r| {
                 (r.size(), r.center().to_vec2())
@@ -169,7 +169,10 @@ fn group_bounds(
 
 /// Whether canvas point `p` lands on the layer at `frame`.
 pub fn hit_test(project: &Project, layer: &Layer, frame: f32, p: Vec2) -> bool {
-    if matches!(layer.kind, LayerKind::Camera { .. }) {
+    if matches!(
+        layer.kind,
+        LayerKind::Camera { .. } | LayerKind::Audio { .. }
+    ) {
         return false;
     }
     if matches!(layer.kind, LayerKind::Group) {

@@ -175,7 +175,7 @@ impl AetherApp {
             if icons::toggle(ui, lock, "Lock / unlock", layer.locked).clicked() {
                 layer.locked = !layer.locked;
             }
-            if !matches!(layer.kind, LayerKind::Camera { .. }) {
+            if layer.kind.is_visual() || matches!(layer.kind, LayerKind::Null) {
                 let tip = if layer.three_d {
                     "3D layer: turn off to make it flat"
                 } else {
@@ -212,6 +212,7 @@ impl AetherApp {
         let is_shape = matches!(layer.kind, LayerKind::Shape { .. });
         let has_content = layer.kind.is_visual();
         let is_group = matches!(layer.kind, LayerKind::Group);
+        let is_audio = matches!(layer.kind, LayerKind::Audio { .. });
         let page_id = egui::Id::new("inspector_page");
         let mut page = ui
             .data(|d| d.get_temp::<Page>(page_id))
@@ -222,7 +223,15 @@ impl AetherApp {
         {
             page = Page::Transform;
         }
-        let mut pages = vec![(Page::Transform, Icon::Transform, "Move")];
+        // Sound has no place on the canvas: just its settings and timing.
+        if is_audio && !matches!(page, Page::Content | Page::Timing) {
+            page = Page::Content;
+        }
+        let mut pages = if is_audio {
+            vec![(Page::Content, Icon::Audio, "Audio")]
+        } else {
+            vec![(Page::Transform, Icon::Transform, "Move")]
+        };
         if has_content && !is_group {
             pages.push((
                 Page::Content,
@@ -374,6 +383,30 @@ impl AetherApp {
                 LayerKind::Image { path, size } => {
                     ui.label(format!("{} × {} px", size.x, size.y));
                     ui.label(RichText::new(path.display().to_string()).small().weak());
+                }
+                LayerKind::Audio { path, volume, .. } => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    ui.label(RichText::new(name).strong());
+                    ui.label(RichText::new(path.display().to_string()).small().weak());
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Volume");
+                        let mut percent = *volume * 100.0;
+                        if ui
+                            .add(egui::Slider::new(&mut percent, 0.0..=200.0).suffix("%"))
+                            .changed()
+                        {
+                            *volume = percent / 100.0;
+                        }
+                    });
+                    ui.label(
+                        RichText::new("Drag the bar's left edge to trim the start.")
+                            .small()
+                            .weak(),
+                    );
                 }
                 LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group => {}
             },

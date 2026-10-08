@@ -290,7 +290,10 @@ impl AetherApp {
         let layer = self.selected_layer()?;
         if !layer.is_active_at(self.frame)
             || layer.locked
-            || matches!(layer.kind, LayerKind::Camera { .. })
+            || matches!(
+                layer.kind,
+                LayerKind::Camera { .. } | LayerKind::Audio { .. }
+            )
         {
             return None;
         }
@@ -377,7 +380,12 @@ impl AetherApp {
         let Some(layer) = self.selected_layer() else {
             return;
         };
-        if !layer.is_active_at(self.frame) || matches!(layer.kind, LayerKind::Camera { .. }) {
+        if !layer.is_active_at(self.frame)
+            || matches!(
+                layer.kind,
+                LayerKind::Camera { .. } | LayerKind::Audio { .. }
+            )
+        {
             return;
         }
         let geom = render::layer_geom(&self.project, layer, self.frame as f32);

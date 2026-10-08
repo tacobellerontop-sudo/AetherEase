@@ -52,6 +52,7 @@ pub enum Icon {
     Group,
     Ungroup,
     Right,
+    Audio,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -346,6 +347,11 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::Right => line(&[p(-0.2, -0.45), p(0.25, 0.0), p(-0.2, 0.45)]),
+        Icon::Audio => {
+            // A music note.
+            line(&[p(0.25, 0.35), p(0.25, -0.6), p(0.6, -0.4)]);
+            painter.circle_filled(p(0.02, 0.38), 0.24 * s, color);
+        }
         Icon::Link => {
             // Two chain links at an angle.
             for (x, y) in [(-0.22, 0.22), (0.22, -0.22)] {

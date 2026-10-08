@@ -634,6 +634,19 @@ impl AetherApp {
                 StrokeKind::Inside,
             );
         }
+        if let Some(crate::model::LayerKind::Audio { path, start, .. }) =
+            self.project.layer(id).map(|l| &l.kind)
+            && let Some(wave) = self.waveforms.get(path, ui.ctx())
+        {
+            draw_waveform(
+                &track_painter.with_clip_rect(bar.shrink(1.0).intersect(track_clip)),
+                bar,
+                &wave,
+                scale,
+                *start,
+                self.project.fps,
+            );
+        }
         track_painter
             .with_clip_rect(bar.intersect(track_clip))
             .text(
@@ -791,6 +804,45 @@ impl AetherApp {
                 layer.locked = !layer.locked;
             }
         }
+    }
+}
+
+/// The sound's level as mirrored bars across an audio layer's clip.
+fn draw_waveform(
+    painter: &egui::Painter,
+    bar: Rect,
+    wave: &crate::audio::Waveform,
+    scale: TimeScale,
+    start: i32,
+    fps: u32,
+) {
+    let clip = painter.clip_rect();
+    let fps = fps.max(1) as f32;
+    let mid = bar.center().y;
+    let half = bar.height() * 0.42;
+    let color = Color32::from_white_alpha(110);
+    // One bar every 2 points across the visible part of the clip.
+    let mut x = clip.left().max(bar.left());
+    while x < clip.right().min(bar.right()) {
+        let seconds = (scale.frame_at(x) - start as f32) / fps;
+        let next = (scale.frame_at(x + 2.0) - start as f32) / fps;
+        let (a, b) = (
+            (seconds * crate::audio::PEAKS_PER_SECOND).max(0.0) as usize,
+            (next * crate::audio::PEAKS_PER_SECOND).max(0.0) as usize,
+        );
+        let peak = wave
+            .peaks
+            .get(a..b.max(a + 1).min(wave.peaks.len()))
+            .and_then(|w| w.iter().copied().reduce(f32::max))
+            .unwrap_or(0.0);
+        if seconds >= 0.0 && peak > 0.0 {
+            let h = (peak * half).max(0.5);
+            painter.line_segment(
+                [Pos2::new(x, mid - h), Pos2::new(x, mid + h)],
+                Stroke::new(1.2, color),
+            );
+        }
+        x += 2.0;
     }
 }
 

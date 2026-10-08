@@ -1,5 +1,6 @@
 //! Editor panels. Each module adds `*_ui` methods to [`crate::app::AetherApp`].
 
+pub mod export_dialog;
 pub mod home;
 pub mod icons;
 pub mod inspector;

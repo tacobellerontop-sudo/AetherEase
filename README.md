@@ -37,7 +37,7 @@ grow into a real alternative to After Effects.
   and glow (colour, radius, strength), stacked in any order, each with
   keyframable settings that show on the layer's timeline bar.
 - **One renderer for everything**: frames are composited on the CPU with
-  tiny-skia, so the canvas, thumbnails and (soon) export match exactly. Text
+  tiny-skia, so the canvas, thumbnails and export match exactly. Text
   is drawn from glyph outlines, so it stays sharp under any transform.
 - **Groups**: Ctrl+G (or the folder button) puts a layer in a group; the
   Move page's Group picker moves layers in and out, all without them moving
@@ -45,6 +45,15 @@ grow into a real alternative to After Effects.
   and have their own transform, opacity, blending and effects.
 - **Masking**: set a layer's blending to **Mask** to show the layers below it
   in its group only where it is, or **Mask (inverted)** to cut it out.
+- **Audio**: import MP3, WAV, OGG, FLAC or M4A from the + menu. Audio
+  layers show their waveform on the timeline, play in sync with the
+  playhead, can be moved and trimmed like any layer, and have a volume
+  control.
+- **Export** (top-right button or Ctrl+E): MP4 video with the audio mixed
+  in, a looping GIF, or numbered PNG frames, at 100%, 75%, 50% or 25% size,
+  rendered in the background with a progress bar. MP4 uses
+  [ffmpeg](https://ffmpeg.org): install it, or put `ffmpeg.exe` next to
+  `aetherease.exe`. GIF and PNG need nothing extra.
 - **Null layers**: invisible layers (a dashed box in the editor, nothing in
   the output) that other layers can be parented to.
 - **Parenting**: pick a Parent on the Move page and the layer follows that
@@ -85,6 +94,8 @@ cargo run --release -- examples/3d-demo.aether
 
 On Windows this produces a native `aetherease.exe` using DirectX 12 or Vulkan
 through wgpu. CI builds a Windows release binary for every pull request.
+On Linux, audio playback needs the ALSA headers to build
+(`sudo apt install libasound2-dev`).
 
 ## Shortcuts
 
@@ -107,6 +118,8 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | `src/model/anim.rs` | `Animated<T>` values, keyframes, easing |
 | `src/model/groups.rs` | Grouping, ungrouping and moving layers between groups in place |
 | `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
+| `src/audio.rs` | Audio playback in step with the playhead, waveforms |
+| `src/export.rs` | MP4 (via ffmpeg), GIF and PNG export on a background thread |
 | `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |

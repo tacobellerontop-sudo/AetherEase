@@ -102,6 +102,14 @@ pub enum LayerKind {
         /// Pixel size of the image when it was imported.
         size: Vec2,
     },
+    /// A sound file, played from frame `start` (where the file's time zero
+    /// sits; the layer's in point can trim its head).
+    Audio {
+        path: PathBuf,
+        start: i32,
+        /// Gain, 1.0 = as recorded.
+        volume: f32,
+    },
     /// An invisible layer that other layers can be parented to.
     Null,
     /// Holds other layers (those whose `group` is this layer's id). They move
@@ -119,7 +127,10 @@ pub enum LayerKind {
 impl LayerKind {
     /// Nulls and cameras only exist in the editor; they never render.
     pub fn is_visual(&self) -> bool {
-        !matches!(self, LayerKind::Null | LayerKind::Camera { .. })
+        !matches!(
+            self,
+            LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Audio { .. }
+        )
     }
 
     /// Whether the layer can have a fill colour (shapes and text).
@@ -134,6 +145,7 @@ impl LayerKind {
             LayerKind::Image { .. } => "Image",
             LayerKind::Null => "Null",
             LayerKind::Group => "Group",
+            LayerKind::Audio { .. } => "Audio",
             LayerKind::Camera { .. } => "Camera",
         }
     }
@@ -401,6 +413,9 @@ impl Layer {
 
     /// Every animatable property this layer has, in display order.
     pub fn props(&self) -> Vec<PropId> {
+        if matches!(self.kind, LayerKind::Audio { .. }) {
+            return Vec::new();
+        }
         let mut props = vec![PropId::Position];
         if self.is_3d() {
             props.push(PropId::Depth);
@@ -419,6 +434,7 @@ impl Layer {
                 return props;
             }
             LayerKind::Image { .. } | LayerKind::Group => props.push(PropId::Opacity),
+            LayerKind::Audio { .. } => {}
             LayerKind::Shape { .. } | LayerKind::Text { .. } => {
                 props.extend([PropId::Opacity, PropId::Fill]);
                 match self.fill_style {
@@ -582,6 +598,9 @@ impl Layer {
     pub fn shift_in_time(&mut self, delta: i32) {
         self.in_frame += delta;
         self.out_frame += delta;
+        if let LayerKind::Audio { start, .. } = &mut self.kind {
+            *start += delta;
+        }
         for prop in self.props() {
             if let Some(track) = self.track_mut(prop) {
                 track.shift_keys(delta);
@@ -714,6 +733,31 @@ impl Project {
             self.new_layer_frames(frame),
         );
         layer.transform.scale = Animated::new(vec2(fit, fit));
+        self.push(layer)
+    }
+
+    /// Adds a sound that starts at `frame` and lasts `seconds`.
+    pub fn add_audio(&mut self, path: PathBuf, seconds: f32, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Audio".into());
+        let name = self.unique_name(&stem);
+        let start = frame.max(0);
+        let length = ((seconds * self.fps as f32).ceil() as i32).max(1);
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Audio {
+                path,
+                start,
+                volume: 1.0,
+            },
+            self.center(),
+            (start, start + length),
+        );
+        layer.out_frame = start + length;
         self.push(layer)
     }
 

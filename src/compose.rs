@@ -231,7 +231,8 @@ fn draw_layer(
                 }
             }
         }
-        LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group => {}
+        LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group | LayerKind::Audio { .. } => {
+        }
     }
 }
 

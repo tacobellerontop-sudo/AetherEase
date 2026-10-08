@@ -7,7 +7,7 @@ use crate::model::ShapeKind;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
-const SHORTCUTS: [(&str, &str); 13] = [
+const SHORTCUTS: [(&str, &str); 14] = [
     ("Space", "Play / pause"),
     ("← / →", "Previous / next frame"),
     ("Home / End", "First / last frame"),
@@ -17,6 +17,7 @@ const SHORTCUTS: [(&str, &str); 13] = [
     ("Ctrl+Shift+G", "Ungroup"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+S", "Save"),
+    ("Ctrl+E", "Export"),
     ("Ctrl+N", "New project"),
     ("Scroll", "Zoom the canvas"),
     ("Middle drag", "Pan the canvas"),
@@ -58,6 +59,15 @@ impl AetherApp {
                 egui::Popup::menu(&more)
                     .align(RectAlign::BOTTOM_END)
                     .show(|ui| self.more_menu(ui));
+                ui.add_space(4.0);
+                // The one prominent action, like Alight Motion's share button.
+                let export = egui::Button::new(RichText::new("Export").strong())
+                    .fill(theme::ACCENT_SOFT)
+                    .corner_radius(16)
+                    .min_size(egui::vec2(84.0, 30.0));
+                if ui.add(export).on_hover_text("Export (Ctrl+E)").clicked() {
+                    self.open_export();
+                }
                 ui.add_space(8.0);
                 // Undo and redo sit together near the right edge.
                 if icons::icon_button(
@@ -104,8 +114,15 @@ impl AetherApp {
             self.save_as();
         }
         ui.separator();
+        if ui.button("Export…").clicked() {
+            self.open_export();
+        }
+        ui.separator();
         if ui.button("Import image…").clicked() {
             self.import_image();
+        }
+        if ui.button("Import audio…").clicked() {
+            self.import_audio();
         }
         ui.separator();
         ui.menu_button("Keyboard shortcuts", |ui| {
@@ -187,6 +204,12 @@ impl AetherApp {
                 .clicked()
             {
                 self.add_null();
+            }
+            if icons::tile(ui, Icon::Audio, "Audio", false, size)
+                .on_hover_text("Music or sound effects")
+                .clicked()
+            {
+                self.import_audio();
             }
             if icons::tile(ui, Icon::Camera, "Camera", false, size)
                 .on_hover_text("Views 3D layers in perspective")

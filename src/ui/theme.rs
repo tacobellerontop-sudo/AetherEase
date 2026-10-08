@@ -89,6 +89,7 @@ pub fn layer_color(kind: &LayerKind) -> Color32 {
         LayerKind::Image { .. } => Color32::from_rgb(52, 176, 124),
         LayerKind::Null => Color32::from_rgb(200, 72, 92),
         LayerKind::Group => Color32::from_rgb(150, 110, 230),
+        LayerKind::Audio { .. } => Color32::from_rgb(38, 166, 154),
         LayerKind::Camera { .. } => Color32::from_rgb(120, 128, 150),
     }
 }
@@ -107,6 +108,7 @@ pub fn layer_icon(kind: &LayerKind) -> Icon {
         LayerKind::Image { .. } => Icon::Image,
         LayerKind::Null => Icon::Null,
         LayerKind::Group => Icon::Group,
+        LayerKind::Audio { .. } => Icon::Audio,
         LayerKind::Camera { .. } => Icon::Camera,
     }
 }
