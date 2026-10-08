@@ -27,12 +27,15 @@ grow into a real alternative to After Effects.
   slim top bar (back to home, project name, undo/redo, a "more" menu), the
   canvas with a round **+** button for adding layers, a property panel on the
   right organised as icon pages (Move, Shape/Text/Image, Color, Border,
-  Timing), and the timeline along the bottom with centred playback controls.
+  Effects, Timing), and the timeline along the bottom with centred playback controls.
 - **Layers**: rectangles (with rounded corners), ellipses, triangles,
   polygons, stars, text, and imported images (PNG, JPEG, WebP, BMP, GIF).
 - **Color page**: solid fills or linear and radial gradients (with
   keyframable colours and angle), opacity, and 17 blending modes (Multiply,
   Screen, Overlay, Add, Difference, Hue, and more).
+- **Effects page**: blur, drop shadow (colour, distance, angle, softness)
+  and glow (colour, radius, strength), stacked in any order, each with
+  keyframable settings that show on the layer's timeline bar.
 - **One renderer for everything**: frames are composited on the CPU with
   tiny-skia, so the canvas, thumbnails and (soon) export match exactly. Text
   is drawn from glyph outlines, so it stays sharp under any transform.

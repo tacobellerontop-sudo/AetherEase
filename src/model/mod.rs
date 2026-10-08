@@ -1,6 +1,7 @@
 //! The document model: a [`Project`] is a canvas plus a stack of [`Layer`]s.
 
 pub mod anim;
+pub mod effects;
 pub mod space;
 
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use egui::{Color32, Vec2, vec2};
 use serde::{Deserialize, Serialize};
 
 pub use anim::{Animated, Easing, KeyTrack};
+pub use effects::{Effect, EffectKind};
 
 /// Straight-alpha sRGB colour with components in `0..=1`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,6 +27,10 @@ impl Color {
 
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
+    }
+
+    pub fn with_alpha(self, a: f32) -> Self {
+        Self { a, ..self }
     }
 
     pub fn to_color32(self) -> Color32 {
@@ -289,6 +295,8 @@ pub struct Layer {
     pub gradient_angle: Animated<f32>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub blend: BlendMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<Effect>,
     pub border: Border,
     /// The layer whose transform this layer follows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -316,6 +324,11 @@ pub enum PropId {
     CameraZoom,
     FillEnd,
     GradientAngle,
+    /// Parameter `param` of the effect at `index` in the layer's list.
+    Effect {
+        index: u16,
+        param: u8,
+    },
 }
 
 impl Layer {
@@ -343,6 +356,7 @@ impl Layer {
             fill_end: white(),
             gradient_angle: zero(),
             blend: BlendMode::Normal,
+            effects: Vec::new(),
             border: Border {
                 enabled: false,
                 width: Animated::new(4.0),
@@ -391,6 +405,14 @@ impl Layer {
                 }
             }
         }
+        for (index, effect) in self.effects.iter().enumerate() {
+            for param in 0..effect.tracks().len() {
+                props.push(PropId::Effect {
+                    index: index as u16,
+                    param: param as u8,
+                });
+            }
+        }
         if let LayerKind::Shape { shape, .. } = &self.kind {
             props.push(PropId::Size);
             if *shape == ShapeKind::Rectangle {
@@ -404,6 +426,14 @@ impl Layer {
 
     pub fn track(&self, prop: PropId) -> Option<&dyn KeyTrack> {
         Some(match prop {
+            PropId::Effect { index, param } => {
+                return self
+                    .effects
+                    .get(index as usize)?
+                    .tracks()
+                    .into_iter()
+                    .nth(param as usize);
+            }
             PropId::Position => &self.transform.position,
             PropId::Scale => &self.transform.scale,
             PropId::Rotation => &self.transform.rotation,
@@ -433,6 +463,14 @@ impl Layer {
 
     pub fn track_mut(&mut self, prop: PropId) -> Option<&mut dyn KeyTrack> {
         Some(match prop {
+            PropId::Effect { index, param } => {
+                return self
+                    .effects
+                    .get_mut(index as usize)?
+                    .tracks_mut()
+                    .into_iter()
+                    .nth(param as usize);
+            }
             PropId::Position => &mut self.transform.position,
             PropId::Scale => &mut self.transform.scale,
             PropId::Rotation => &mut self.transform.rotation,
@@ -967,6 +1005,22 @@ mod tests {
         }
         let loaded = Project::from_json(&json.to_string()).unwrap();
         assert_eq!(loaded, project);
+    }
+
+    #[test]
+    fn effect_keys_move_with_the_layer() {
+        let mut project = Project::default();
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(id).unwrap();
+        layer.effects.push(Effect::preset(1));
+        if let EffectKind::Shadow { distance, .. } = &mut layer.effects[0].kind {
+            distance.upsert_key(12, 40.0);
+        }
+        assert_eq!(layer.all_key_frames(), vec![12]);
+        layer.shift_in_time(3);
+        assert_eq!(layer.all_key_frames(), vec![15]);
+        layer.remove_keys_at(15);
+        assert!(layer.all_key_frames().is_empty());
     }
 
     #[test]

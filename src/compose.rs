@@ -15,7 +15,7 @@ use tiny_skia::{
     Pixmap, PixmapPaint, Point, RadialGradient, Shader, SpreadMode, Stroke, Transform,
 };
 
-use crate::model::{BlendMode, Color, FillStyle, Layer, LayerKind, Project};
+use crate::model::{BlendMode, Color, EffectKind, FillStyle, Layer, LayerKind, Project};
 use crate::path::{self, Seg};
 use crate::render::{self, LayerGeom};
 use crate::text;
@@ -81,13 +81,18 @@ pub fn render(project: &Project, frame: i32, scale: f32, assets: &mut Assets) ->
         let has_border = matches!(layer.kind, LayerKind::Shape { .. }) && layer.border.enabled;
         // A partly transparent layer with a border must be flattened first,
         // or the fill would show through the border.
-        let direct = layer.blend == BlendMode::Normal && (opacity >= 1.0 || !has_border);
+        let has_effects = layer.effects.iter().any(|e| e.enabled);
+        let direct =
+            layer.blend == BlendMode::Normal && !has_effects && (opacity >= 1.0 || !has_border);
         if direct {
             draw_layer(&mut out, layer, &geom, f, scale, opacity, assets, &to_px);
         } else {
             let tmp = scratch.get_or_insert_with(|| Pixmap::new(w, h).expect("non-zero size"));
             tmp.fill(tiny_skia::Color::TRANSPARENT);
             draw_layer(tmp, layer, &geom, f, scale, 1.0, assets, &to_px);
+            // Effects work in layer pixels, so they grow and shrink with the
+            // layer's scale and the zoom.
+            apply_effects(tmp, layer, f, geom.average_scale() * scale);
             out.draw_pixmap(
                 0,
                 0,
@@ -197,6 +202,151 @@ fn draw_layer(
             }
         }
         LayerKind::Null | LayerKind::Camera { .. } => {}
+    }
+}
+
+/// Runs the layer's enabled effects, in order, on its rendered image.
+fn apply_effects(image: &mut Pixmap, layer: &Layer, frame: f32, px_per_unit: f32) {
+    for effect in layer.effects.iter().filter(|e| e.enabled) {
+        match &effect.kind {
+            EffectKind::Blur { radius } => {
+                blur(image, radius.sample(frame).max(0.0) * px_per_unit);
+            }
+            EffectKind::Shadow {
+                color,
+                distance,
+                angle,
+                blur: softness,
+            } => {
+                let mut shadow = silhouette(image, color.sample(frame), 1.0);
+                blur(&mut shadow, softness.sample(frame).max(0.0) * px_per_unit);
+                let (s, c) = angle.sample(frame).to_radians().sin_cos();
+                let offset = vec2(c, s) * distance.sample(frame) * px_per_unit;
+                put_behind(image, &shadow, offset);
+            }
+            EffectKind::Glow {
+                color,
+                radius,
+                strength,
+            } => {
+                let mut glow = silhouette(image, color.sample(frame), 1.0);
+                blur(&mut glow, radius.sample(frame).max(0.0) * px_per_unit);
+                scale_alpha(&mut glow, strength.sample(frame).max(0.0));
+                put_behind(image, &glow, Vec2::ZERO);
+            }
+        }
+    }
+}
+
+/// The image's shape filled with `color`.
+fn silhouette(image: &Pixmap, color: Color, opacity: f32) -> Pixmap {
+    let mut out = image.clone();
+    let c = color.with_alpha(color.a * opacity);
+    let rgba = [c.r * c.a, c.g * c.a, c.b * c.a, c.a].map(|v| v.clamp(0.0, 1.0));
+    for px in out.data_mut().chunks_exact_mut(4) {
+        let a = px[3] as f32;
+        for (out, v) in px.iter_mut().zip(rgba) {
+            *out = (v * a).round() as u8;
+        }
+    }
+    out
+}
+
+/// Multiplies a premultiplied image's coverage, saturating at full.
+fn scale_alpha(image: &mut Pixmap, factor: f32) {
+    for v in image.data_mut() {
+        *v = (*v as f32 * factor).round().min(255.0) as u8;
+    }
+}
+
+/// Composites `behind` (shifted by `offset`) underneath `image`.
+fn put_behind(image: &mut Pixmap, behind: &Pixmap, offset: Vec2) {
+    let mut out = Pixmap::new(image.width(), image.height()).expect("same size");
+    out.draw_pixmap(
+        0,
+        0,
+        behind.as_ref(),
+        &PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        },
+        Transform::from_translate(offset.x, offset.y),
+        None,
+    );
+    out.draw_pixmap(
+        0,
+        0,
+        image.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    *image = out;
+}
+
+/// Approximates a gaussian blur with standard deviation `sigma` pixels by
+/// three box blurs, each pass horizontal then vertical.
+pub fn blur(image: &mut Pixmap, sigma: f32) {
+    if sigma < 0.3 {
+        return;
+    }
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let data = image.data_mut();
+    let mut scratch = vec![0u8; data.len()];
+    for radius in box_radii(sigma) {
+        box_blur(data, &mut scratch, w, h, radius, 4, w * 4);
+        box_blur(&scratch, data, h, w, radius, w * 4, 4);
+    }
+}
+
+/// Radii of three box blurs whose combination approximates a gaussian
+/// (after Kovesi, "Fast almost-Gaussian filtering").
+fn box_radii(sigma: f32) -> [usize; 3] {
+    let n = 3.0;
+    let ideal = (12.0 * sigma * sigma / n + 1.0).sqrt();
+    let mut lower = ideal.floor() as i32;
+    if lower % 2 == 0 {
+        lower -= 1;
+    }
+    let upper = lower + 2;
+    let lower_f = lower as f32;
+    let m = ((12.0 * sigma * sigma - n * lower_f * lower_f - 4.0 * n * lower_f - 3.0 * n)
+        / (-4.0 * lower_f - 4.0))
+        .round() as i32;
+    std::array::from_fn(|i| {
+        let size = if (i as i32) < m { lower } else { upper };
+        (size.max(1) as usize - 1) / 2
+    })
+}
+
+/// One box-blur pass along lines of `len` pixels. `step` is the byte stride
+/// between neighbouring pixels on a line and `line_step` between lines, so
+/// the same code runs horizontally and vertically. Edges are transparent.
+fn box_blur(
+    src: &[u8],
+    dst: &mut [u8],
+    lines: usize,
+    len: usize,
+    radius: usize,
+    line_step: usize,
+    step: usize,
+) {
+    let window = (2 * radius + 1) as u32;
+    for line in 0..lines {
+        let base = line * line_step;
+        for ch in 0..4 {
+            let at = |i: usize| src[base + i * step + ch] as u32;
+            let mut sum: u32 = (0..radius.min(len)).map(at).sum();
+            for i in 0..len {
+                if i + radius < len {
+                    sum += at(i + radius);
+                }
+                dst[base + i * step + ch] = ((sum + window / 2) / window) as u8;
+                if i >= radius {
+                    sum -= at(i - radius);
+                }
+            }
+        }
     }
 }
 
@@ -470,6 +620,62 @@ mod tests {
         let right = pixel(&out, (1090.0 * 0.25) as u32, 135);
         assert!(left[0] > 200 && left[2] < 50, "{left:?}");
         assert!(right[2] > 200 && right[0] < 50, "{right:?}");
+    }
+
+    #[test]
+    fn blur_spreads_and_keeps_total_coverage() {
+        let mut p = Pixmap::new(41, 41).unwrap();
+        p.fill_rect(
+            tiny_skia::Rect::from_xywh(15.0, 15.0, 11.0, 11.0).unwrap(),
+            &Paint::default(),
+            Transform::identity(),
+            None,
+        );
+        let total = |p: &Pixmap| {
+            p.data()
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .map(|&a| a as u32)
+                .sum::<u32>()
+        };
+        let before = total(&p);
+        blur(&mut p, 3.0);
+        let after = total(&p);
+        assert!(pixel(&p, 12, 20)[3] > 0, "blur reaches outside the square");
+        assert!(pixel(&p, 20, 20)[3] < 255, "the centre softens");
+        let drift = (after as f32 - before as f32).abs() / before as f32;
+        assert!(drift < 0.02, "coverage drifted by {drift}");
+    }
+
+    #[test]
+    fn shadows_fall_behind_and_offset() {
+        let mut project = Project {
+            background: Color::WHITE,
+            ..Project::default()
+        };
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(id).unwrap();
+        let mut shadow = crate::model::Effect::preset(1);
+        if let EffectKind::Shadow {
+            distance,
+            blur,
+            color,
+            ..
+        } = &mut shadow.kind
+        {
+            *distance = crate::model::Animated::new(200.0);
+            *blur = crate::model::Animated::new(0.0);
+            *color = crate::model::Animated::new(Color::BLACK);
+        }
+        layer.effects.push(shadow);
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        // Below the square (it spans y 405..675) by less than the offset.
+        let below = pixel(&out, 240, (800.0 * 0.25) as u32);
+        assert_eq!(below, [0, 0, 0, 255]);
+        // The square itself still covers its shadow.
+        let [r, g, b, _] = pixel(&out, 240, 135);
+        assert!(b > 200 && r < 150 && g > 100, "{r} {g} {b}");
     }
 
     #[test]

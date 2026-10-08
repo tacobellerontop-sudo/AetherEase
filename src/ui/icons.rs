@@ -48,6 +48,7 @@ pub enum Icon {
     Camera,
     Cube,
     Link,
+    Effects,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -307,6 +308,21 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             painter.add(Shape::closed_line(front.to_vec(), stroke));
             line(&[front[0], front[0] + d, front[1] + d, front[1]]);
             line(&[front[1] + d, front[2] + d, front[2]]);
+        }
+        Icon::Effects => {
+            // A big and a small sparkle.
+            let sparkle = |cx: f32, cy: f32, r: f32| {
+                let pts: Vec<Pos2> = (0..8)
+                    .map(|i| {
+                        let a = -FRAC_PI_2 + TAU * i as f32 / 8.0;
+                        let r = if i % 2 == 0 { r } else { r * 0.3 };
+                        p(cx + a.cos() * r, cy + a.sin() * r)
+                    })
+                    .collect();
+                painter.add(Shape::closed_line(pts, stroke));
+            };
+            sparkle(-0.15, 0.1, 0.55);
+            sparkle(0.45, -0.45, 0.25);
         }
         Icon::Link => {
             // Two chain links at an angle.

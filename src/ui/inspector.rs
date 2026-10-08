@@ -6,7 +6,8 @@ use egui::{Color32, CornerRadius, DragValue, Grid, RichText, Sense, Stroke, Ui, 
 use crate::app::AetherApp;
 use crate::model::anim::Lerp;
 use crate::model::{
-    Animated, BlendMode, Color, Easing, FillStyle, KeyTrack, Layer, LayerKind, ShapeKind,
+    Animated, BlendMode, Color, Easing, Effect, EffectKind, FillStyle, KeyTrack, Layer, LayerKind,
+    ShapeKind,
 };
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
@@ -208,7 +209,7 @@ impl AetherApp {
             .data(|d| d.get_temp::<Page>(page_id))
             .unwrap_or(Page::Transform);
         if (page == Page::Border && !is_shape)
-            || (matches!(page, Page::Content | Page::Fill) && !has_content)
+            || (matches!(page, Page::Content | Page::Fill | Page::Effects) && !has_content)
         {
             page = Page::Transform;
         }
@@ -223,6 +224,9 @@ impl AetherApp {
         }
         if is_shape {
             pages.push((Page::Border, Icon::Border, "Border"));
+        }
+        if has_content {
+            pages.push((Page::Effects, Icon::Effects, "Effects"));
         }
         pages.push((Page::Timing, Icon::Timing, "Timing"));
         ui.horizontal(|ui| {
@@ -392,6 +396,7 @@ impl AetherApp {
                     });
                 });
             }
+            Page::Effects => effects_section(ui, &mut layer.effects, frame),
             Page::Timing => {
                 Grid::new("timing_grid").num_columns(2).show(ui, |ui| {
                     ui.label("Starts at");
@@ -469,6 +474,7 @@ enum Page {
     Content,
     Fill,
     Border,
+    Effects,
     Timing,
 }
 
@@ -601,6 +607,98 @@ fn shape_section(
                 )
                 .changed()
             });
+        }
+    });
+}
+
+fn effects_section(ui: &mut Ui, effects: &mut Vec<Effect>, frame: i32) {
+    let mut remove = None;
+    let mut swap = None;
+    let count = effects.len();
+    for (i, effect) in effects.iter_mut().enumerate() {
+        ui.push_id(i, |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut effect.enabled, "");
+                ui.label(RichText::new(effect.name()).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icons::button(ui, Icon::Trash, "Remove effect").clicked() {
+                        remove = Some(i);
+                    }
+                    if i + 1 < count && icons::button(ui, Icon::Down, "Apply later").clicked() {
+                        swap = Some(i);
+                    }
+                    if i > 0 && icons::button(ui, Icon::Up, "Apply earlier").clicked() {
+                        swap = Some(i - 1);
+                    }
+                });
+            });
+            ui.add_enabled_ui(effect.enabled, |ui| {
+                Grid::new("effect_grid").num_columns(3).show(ui, |ui| {
+                    let px = |max: f32| {
+                        move |ui: &mut Ui, v: &mut f32| {
+                            ui.add(DragValue::new(v).range(0.0..=max).speed(0.3).suffix(" px"))
+                                .changed()
+                        }
+                    };
+                    match &mut effect.kind {
+                        EffectKind::Blur { radius } => {
+                            anim_row(ui, "Radius", radius, frame, px(500.0));
+                        }
+                        EffectKind::Shadow {
+                            color,
+                            distance,
+                            angle,
+                            blur,
+                        } => {
+                            anim_row(ui, "Color", color, frame, color_edit);
+                            anim_row(ui, "Distance", distance, frame, px(2000.0));
+                            anim_row(ui, "Angle", angle, frame, |ui, v| {
+                                ui.add(DragValue::new(v).speed(1.0).suffix("°")).changed()
+                            });
+                            anim_row(ui, "Softness", blur, frame, px(500.0));
+                        }
+                        EffectKind::Glow {
+                            color,
+                            radius,
+                            strength,
+                        } => {
+                            anim_row(ui, "Color", color, frame, color_edit);
+                            anim_row(ui, "Radius", radius, frame, px(500.0));
+                            anim_row(ui, "Strength", strength, frame, |ui, v| {
+                                let mut percent = *v * 100.0;
+                                let changed = ui
+                                    .add(
+                                        DragValue::new(&mut percent)
+                                            .range(0.0..=1000.0)
+                                            .speed(1.0)
+                                            .suffix("%"),
+                                    )
+                                    .changed();
+                                *v = percent / 100.0;
+                                changed
+                            });
+                        }
+                    }
+                });
+            });
+            ui.separator();
+        });
+    }
+    if let Some(i) = remove {
+        effects.remove(i);
+    }
+    if let Some(i) = swap {
+        effects.swap(i, i + 1);
+    }
+    if effects.is_empty() {
+        ui.label(RichText::new("Effects run in order on this layer's image.").weak());
+    }
+    ui.menu_button("+ Add effect", |ui| {
+        for (i, name) in Effect::PRESETS.iter().enumerate() {
+            if ui.button(*name).clicked() {
+                effects.push(Effect::preset(i));
+                ui.close();
+            }
         }
     });
 }
