@@ -41,13 +41,6 @@ impl Color {
             a as f32 / 255.0,
         )
     }
-
-    pub fn with_alpha_factor(self, factor: f32) -> Self {
-        Self {
-            a: self.a * factor,
-            ..self
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -166,6 +159,104 @@ pub struct Transform {
     pub rotation_y: Animated<f32>,
 }
 
+/// How a layer's colours combine with the layers below it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Add,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl BlendMode {
+    pub const ALL: [BlendMode; 17] = [
+        BlendMode::Normal,
+        BlendMode::Multiply,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+        BlendMode::ColorDodge,
+        BlendMode::ColorBurn,
+        BlendMode::HardLight,
+        BlendMode::SoftLight,
+        BlendMode::Difference,
+        BlendMode::Exclusion,
+        BlendMode::Add,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "Normal",
+            BlendMode::Multiply => "Multiply",
+            BlendMode::Screen => "Screen",
+            BlendMode::Overlay => "Overlay",
+            BlendMode::Darken => "Darken",
+            BlendMode::Lighten => "Lighten",
+            BlendMode::ColorDodge => "Color dodge",
+            BlendMode::ColorBurn => "Color burn",
+            BlendMode::HardLight => "Hard light",
+            BlendMode::SoftLight => "Soft light",
+            BlendMode::Difference => "Difference",
+            BlendMode::Exclusion => "Exclusion",
+            BlendMode::Add => "Add",
+            BlendMode::Hue => "Hue",
+            BlendMode::Saturation => "Saturation",
+            BlendMode::Color => "Color",
+            BlendMode::Luminosity => "Luminosity",
+        }
+    }
+}
+
+/// How shapes and text are filled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FillStyle {
+    #[default]
+    Solid,
+    /// From `fill` to `fill_end` along `gradient_angle`.
+    Linear,
+    /// From `fill` at the centre to `fill_end` at the edge.
+    Radial,
+}
+
+impl FillStyle {
+    pub const ALL: [FillStyle; 3] = [FillStyle::Solid, FillStyle::Linear, FillStyle::Radial];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FillStyle::Solid => "Solid",
+            FillStyle::Linear => "Linear gradient",
+            FillStyle::Radial => "Radial gradient",
+        }
+    }
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
+}
+
+fn white() -> Animated<Color> {
+    Animated::new(Color::WHITE)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Border {
     pub enabled: bool,
@@ -186,8 +277,18 @@ pub struct Layer {
     pub out_frame: i32,
     pub transform: Transform,
     pub opacity: Animated<f32>,
-    /// Fill colour of shapes and text; a tint multiplier for images.
+    /// Fill colour of shapes and text (the start colour of a gradient).
     pub fill: Animated<Color>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub fill_style: FillStyle,
+    /// End colour of a gradient fill.
+    #[serde(default = "white")]
+    pub fill_end: Animated<Color>,
+    /// Direction of a linear gradient in degrees; 0 runs left to right.
+    #[serde(default = "zero")]
+    pub gradient_angle: Animated<f32>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub blend: BlendMode,
     pub border: Border,
     /// The layer whose transform this layer follows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,6 +314,8 @@ pub enum PropId {
     RotationX,
     RotationY,
     CameraZoom,
+    FillEnd,
+    GradientAngle,
 }
 
 impl Layer {
@@ -236,6 +339,10 @@ impl Layer {
             },
             opacity: Animated::new(1.0),
             fill: Animated::new(Color::WHITE),
+            fill_style: FillStyle::Solid,
+            fill_end: white(),
+            gradient_angle: zero(),
+            blend: BlendMode::Normal,
             border: Border {
                 enabled: false,
                 width: Animated::new(4.0),
@@ -274,7 +381,15 @@ impl Layer {
                 props.push(PropId::CameraZoom);
                 return props;
             }
-            _ => props.extend([PropId::Opacity, PropId::Fill]),
+            LayerKind::Image { .. } => props.push(PropId::Opacity),
+            LayerKind::Shape { .. } | LayerKind::Text { .. } => {
+                props.extend([PropId::Opacity, PropId::Fill]);
+                match self.fill_style {
+                    FillStyle::Solid => {}
+                    FillStyle::Linear => props.extend([PropId::FillEnd, PropId::GradientAngle]),
+                    FillStyle::Radial => props.push(PropId::FillEnd),
+                }
+            }
         }
         if let LayerKind::Shape { shape, .. } = &self.kind {
             props.push(PropId::Size);
@@ -297,6 +412,8 @@ impl Layer {
             PropId::BorderWidth => &self.border.width,
             PropId::BorderColor => &self.border.color,
             PropId::Depth => &self.transform.z,
+            PropId::FillEnd => &self.fill_end,
+            PropId::GradientAngle => &self.gradient_angle,
             PropId::RotationX => &self.transform.rotation_x,
             PropId::RotationY => &self.transform.rotation_y,
             PropId::CameraZoom => match &self.kind {
@@ -324,6 +441,8 @@ impl Layer {
             PropId::BorderWidth => &mut self.border.width,
             PropId::BorderColor => &mut self.border.color,
             PropId::Depth => &mut self.transform.z,
+            PropId::FillEnd => &mut self.fill_end,
+            PropId::GradientAngle => &mut self.gradient_angle,
             PropId::RotationX => &mut self.transform.rotation_x,
             PropId::RotationY => &mut self.transform.rotation_y,
             PropId::CameraZoom => match &mut self.kind {

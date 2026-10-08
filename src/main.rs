@@ -4,10 +4,13 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod compose;
 mod history;
 mod model;
+mod path;
 mod recent;
 mod render;
+mod text;
 mod ui;
 
 fn main() -> eframe::Result {

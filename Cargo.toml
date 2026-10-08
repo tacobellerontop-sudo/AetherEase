@@ -7,12 +7,16 @@ description = "AetherEase: a motion graphics editor for the desktop"
 publish = false
 
 [dependencies]
+ab_glyph = "0.2"
 eframe = "0.36"
 egui = { version = "0.36", features = ["serde"] }
+# The font egui ships with, so text renders the same on every machine.
+epaint_default_fonts = "0.36"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tiny-skia = "0.11"
 
 [profile.dev.package."*"]
 # Dependencies (image decoding, the renderer) are slow without optimisation.

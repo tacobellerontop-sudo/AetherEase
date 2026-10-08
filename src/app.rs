@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 
+use crate::compose::{self, Assets};
 use crate::history::History;
 use crate::model::{Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
-use crate::render::{self, TextureCache};
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
 
 pub const PROJECT_EXTENSION: &str = "aether";
@@ -27,6 +27,8 @@ pub enum Screen {
 pub struct HomeItem {
     pub entry: RecentEntry,
     pub project: Option<Project>,
+    /// The project's rendered thumbnail, made the first time it's shown.
+    pub thumbnail: Option<egui::TextureHandle>,
 }
 
 /// A keyframe picked in the timeline.
@@ -58,7 +60,7 @@ pub struct AetherApp {
     pub looping: bool,
     play_clock: f32,
 
-    pub textures: TextureCache,
+    pub assets: Assets,
     pub viewport: ViewportState,
     pub timeline: TimelineState,
 
@@ -88,7 +90,7 @@ impl AetherApp {
             playing: false,
             looping: true,
             play_clock: 0.0,
-            textures: TextureCache::default(),
+            assets: Assets::default(),
             viewport: ViewportState::default(),
             timeline: TimelineState::default(),
             status: None,
@@ -143,17 +145,17 @@ impl AetherApp {
         self.select(Some(id));
     }
 
-    pub fn import_image(&mut self, ctx: &Context) {
+    pub fn import_image(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Images", &IMAGE_EXTENSIONS)
             .pick_file()
         else {
             return;
         };
-        match render::load_image(&path) {
+        match compose::load_image(&path) {
             Ok(image) => {
-                let size = egui::vec2(image.size[0] as f32, image.size[1] as f32);
-                self.textures.insert(ctx, &path, image);
+                let size = egui::vec2(image.width() as f32, image.height() as f32);
+                self.assets.insert(&path, image);
                 let id = self.project.add_image(path, size, self.frame);
                 self.select(Some(id));
             }
@@ -235,7 +237,7 @@ impl AetherApp {
         self.frame = 0;
         self.playing = false;
         self.dirty_since = None;
-        self.textures.clear();
+        self.assets.clear();
         self.viewport = ViewportState::default();
         self.timeline = TimelineState::default();
     }
@@ -297,6 +299,7 @@ impl AetherApp {
                 project: std::fs::read_to_string(&entry.path)
                     .ok()
                     .and_then(|json| Project::from_json(&json).ok()),
+                thumbnail: None,
             })
             .collect();
     }

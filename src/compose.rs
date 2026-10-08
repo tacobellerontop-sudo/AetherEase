@@ -1,0 +1,486 @@
+//! Renders a project frame to pixels with tiny-skia.
+//!
+//! This one renderer feeds the editor preview, home-screen thumbnails and
+//! export, so what you see while editing is what gets exported. Each layer
+//! is drawn straight onto the frame when it can be; layers that blend
+//! differently are drawn on their own first and then blended in.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use egui::{Vec2, vec2};
+use tiny_skia::{
+    FillRule, FilterQuality, GradientStop, LineJoin, LinearGradient, Paint, PathBuilder, Pattern,
+    Pixmap, PixmapPaint, Point, RadialGradient, Shader, SpreadMode, Stroke, Transform,
+};
+
+use crate::model::{BlendMode, Color, FillStyle, Layer, LayerKind, Project};
+use crate::path::{self, Seg};
+use crate::render::{self, LayerGeom};
+use crate::text;
+
+/// Decoded images, shared by every render.
+#[derive(Default)]
+pub struct Assets {
+    images: HashMap<PathBuf, Option<Arc<Pixmap>>>,
+}
+
+impl Assets {
+    pub fn insert(&mut self, path: &Path, image: Pixmap) {
+        self.images.insert(path.to_owned(), Some(Arc::new(image)));
+    }
+
+    /// The image at `path`, decoding it the first time. A file that fails to
+    /// load is remembered so it isn't retried every frame.
+    pub fn image(&mut self, path: &Path) -> Option<Arc<Pixmap>> {
+        self.images
+            .entry(path.to_owned())
+            .or_insert_with(|| load_image(path).ok().map(Arc::new))
+            .clone()
+    }
+
+    pub fn clear(&mut self) {
+        self.images.clear();
+    }
+}
+
+/// Decodes an image file into premultiplied pixels.
+pub fn load_image(path: &Path) -> Result<Pixmap, String> {
+    let img = image::open(path).map_err(|e| e.to_string())?.to_rgba8();
+    let (w, h) = img.dimensions();
+    let mut data = img.into_raw();
+    for px in data.chunks_exact_mut(4) {
+        let a = px[3] as u16;
+        for c in &mut px[..3] {
+            *c = ((*c as u16 * a + 127) / 255) as u8;
+        }
+    }
+    let size = tiny_skia::IntSize::from_wh(w, h).ok_or("the image is empty")?;
+    Pixmap::from_vec(data, size).ok_or_else(|| "the image is too large".into())
+}
+
+/// Renders `frame` at `scale` output pixels per canvas pixel.
+pub fn render(project: &Project, frame: i32, scale: f32, assets: &mut Assets) -> Pixmap {
+    let w = ((project.width as f32 * scale).round() as u32).max(1);
+    let h = ((project.height as f32 * scale).round() as u32).max(1);
+    let mut out = Pixmap::new(w, h).expect("non-zero size");
+    out.fill(color(project.background, 1.0));
+    let mut scratch: Option<Pixmap> = None;
+    for layer in render::paint_order(project, frame) {
+        if !layer.kind.is_visual() {
+            continue;
+        }
+        let f = frame as f32;
+        let geom = render::layer_geom(project, layer, f);
+        let opacity = layer.opacity.sample(f).clamp(0.0, 1.0);
+        if opacity <= 0.0 || !geom.in_front() {
+            continue;
+        }
+        let to_px = |p: Vec2| geom.local_to_canvas(p) * scale;
+        let has_border = matches!(layer.kind, LayerKind::Shape { .. }) && layer.border.enabled;
+        // A partly transparent layer with a border must be flattened first,
+        // or the fill would show through the border.
+        let direct = layer.blend == BlendMode::Normal && (opacity >= 1.0 || !has_border);
+        if direct {
+            draw_layer(&mut out, layer, &geom, f, scale, opacity, assets, &to_px);
+        } else {
+            let tmp = scratch.get_or_insert_with(|| Pixmap::new(w, h).expect("non-zero size"));
+            tmp.fill(tiny_skia::Color::TRANSPARENT);
+            draw_layer(tmp, layer, &geom, f, scale, 1.0, assets, &to_px);
+            out.draw_pixmap(
+                0,
+                0,
+                tmp.as_ref(),
+                &PixmapPaint {
+                    opacity,
+                    blend_mode: blend_mode(layer.blend),
+                    quality: FilterQuality::Nearest,
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_layer(
+    target: &mut Pixmap,
+    layer: &Layer,
+    geom: &LayerGeom,
+    frame: f32,
+    scale: f32,
+    opacity: f32,
+    assets: &mut Assets,
+    to_px: &dyn Fn(Vec2) -> Vec2,
+) {
+    match &layer.kind {
+        LayerKind::Shape {
+            shape,
+            size,
+            corner_radius,
+        } => {
+            let outline =
+                render::shape_outline(*shape, size.sample(frame), corner_radius.sample(frame));
+            let Some(path) = build_path(&path::polygon(&outline), to_px) else {
+                return;
+            };
+            let paint = fill_paint(layer, geom.size, frame, opacity, to_px);
+            target.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+            if layer.border.enabled {
+                let width =
+                    layer.border.width.sample(frame).max(0.0) * geom.average_scale() * scale;
+                if width > 0.0 {
+                    let mut paint = Paint::default();
+                    paint.set_color(color(layer.border.color.sample(frame), opacity));
+                    paint.anti_alias = true;
+                    let stroke = Stroke {
+                        width,
+                        line_join: LineJoin::Round,
+                        ..Stroke::default()
+                    };
+                    target.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+        }
+        LayerKind::Text { text, font_size } => {
+            let layout = text::layout(text, *font_size);
+            let Some(path) = build_path(&layout.outline(), to_px) else {
+                return;
+            };
+            let paint = fill_paint(layer, layout.size, frame, opacity, to_px);
+            target.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+        LayerKind::Image { path, size } => {
+            let Some(image) = assets.image(path) else {
+                draw_missing(target, geom, to_px);
+                return;
+            };
+            // Image pixels to layer-local pixels (centred).
+            let img = vec2(image.width() as f32, image.height() as f32);
+            let to_local = |p: Vec2| p / img * *size - *size * 0.5;
+            if layer.is_3d() {
+                draw_image_perspective(target, &image, img, opacity, &|p| to_px(to_local(p)));
+            } else {
+                let t = affine_through(
+                    [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)],
+                    [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)].map(|p| to_px(to_local(p))),
+                );
+                if let Some(t) = t {
+                    target.draw_pixmap(
+                        0,
+                        0,
+                        Pixmap::as_ref(&image),
+                        &PixmapPaint {
+                            opacity,
+                            blend_mode: tiny_skia::BlendMode::SourceOver,
+                            quality: FilterQuality::Bilinear,
+                        },
+                        t,
+                        None,
+                    );
+                }
+            }
+        }
+        LayerKind::Null | LayerKind::Camera { .. } => {}
+    }
+}
+
+/// Draws an image under perspective by splitting it into small triangles,
+/// each of which is close enough to affine.
+fn draw_image_perspective(
+    target: &mut Pixmap,
+    image: &Pixmap,
+    img: Vec2,
+    opacity: f32,
+    to_px: &dyn Fn(Vec2) -> Vec2,
+) {
+    const N: usize = 10;
+    let grid: Vec<Vec<(Vec2, Vec2)>> = (0..=N)
+        .map(|j| {
+            (0..=N)
+                .map(|i| {
+                    let src = vec2(i as f32, j as f32) / N as f32 * img;
+                    (src, to_px(src))
+                })
+                .collect()
+        })
+        .collect();
+    for j in 0..N {
+        for i in 0..N {
+            let (a, b, c, d) = (
+                grid[j][i],
+                grid[j][i + 1],
+                grid[j + 1][i + 1],
+                grid[j + 1][i],
+            );
+            for tri in [[a, b, c], [a, c, d]] {
+                let Some(t) = affine_through(tri.map(|v| v.0), tri.map(|v| v.1)) else {
+                    continue;
+                };
+                // Grow each triangle a little so neighbours overlap instead
+                // of leaving hairline seams.
+                let center = (tri[0].1 + tri[1].1 + tri[2].1) / 3.0;
+                let grown = tri.map(|v| v.1 + (v.1 - center).normalized() * 0.6);
+                let Some(path) = build_path(&path::polygon(&grown), &|p| p) else {
+                    continue;
+                };
+                let paint = Paint {
+                    shader: Pattern::new(
+                        Pixmap::as_ref(image),
+                        SpreadMode::Pad,
+                        FilterQuality::Bilinear,
+                        opacity,
+                        t,
+                    ),
+                    anti_alias: false,
+                    ..Paint::default()
+                };
+                target.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+/// A crossed-out box where an image file couldn't be loaded.
+fn draw_missing(target: &mut Pixmap, geom: &LayerGeom, to_px: &dyn Fn(Vec2) -> Vec2) {
+    let c = geom.local_corners();
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(200, 60, 90, 80);
+    if let Some(path) = build_path(&path::polygon(&c), to_px) {
+        target.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+    paint.set_color_rgba8(200, 60, 90, 255);
+    let mut segs = path::polygon(&c);
+    segs.extend([
+        Seg::Move(c[0]),
+        Seg::Line(c[2]),
+        Seg::Move(c[1]),
+        Seg::Line(c[3]),
+    ]);
+    if let Some(path) = build_path(&segs, to_px) {
+        let stroke = Stroke {
+            width: 2.0,
+            ..Stroke::default()
+        };
+        target.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+/// The paint for a shape or text fill: a solid colour or a gradient laid out
+/// over a box of `size` layer pixels.
+fn fill_paint(
+    layer: &Layer,
+    size: Vec2,
+    frame: f32,
+    opacity: f32,
+    to_px: &dyn Fn(Vec2) -> Vec2,
+) -> Paint<'static> {
+    let start = color(layer.fill.sample(frame), opacity);
+    let end = color(layer.fill_end.sample(frame), opacity);
+    let stops = || vec![GradientStop::new(0.0, start), GradientStop::new(1.0, end)];
+    let h = size * 0.5;
+    // Gradients are defined in layer pixels and carried to the canvas by the
+    // layer's (locally affine) transform.
+    let local = affine_through(
+        [Vec2::ZERO, vec2(100.0, 0.0), vec2(0.0, 100.0)],
+        [Vec2::ZERO, vec2(100.0, 0.0), vec2(0.0, 100.0)].map(to_px),
+    );
+    let shader = match (layer.fill_style, local) {
+        (FillStyle::Linear, Some(t)) => {
+            let (s, c) = layer.gradient_angle.sample(frame).to_radians().sin_cos();
+            // Reach the box's corners in the gradient direction.
+            let extent = (c * h.x).abs() + (s * h.y).abs();
+            let d = vec2(c, s) * extent.max(0.5);
+            LinearGradient::new(pt(-d), pt(d), stops(), SpreadMode::Pad, t)
+        }
+        (FillStyle::Radial, Some(t)) => RadialGradient::new(
+            Point::zero(),
+            Point::zero(),
+            h.x.max(h.y).max(0.5),
+            stops(),
+            SpreadMode::Pad,
+            t,
+        ),
+        _ => None,
+    };
+    Paint {
+        shader: shader.unwrap_or(Shader::SolidColor(start)),
+        anti_alias: true,
+        ..Paint::default()
+    }
+}
+
+/// Builds a tiny-skia path from local segments mapped by `to_px`.
+fn build_path(segs: &[Seg], to_px: &dyn Fn(Vec2) -> Vec2) -> Option<tiny_skia::Path> {
+    let mut pb = PathBuilder::new();
+    for seg in segs {
+        match seg.map(to_px) {
+            Seg::Move(p) => pb.move_to(p.x, p.y),
+            Seg::Line(p) => pb.line_to(p.x, p.y),
+            Seg::Quad(a, b) => pb.quad_to(a.x, a.y, b.x, b.y),
+            Seg::Cubic(a, b, c) => pb.cubic_to(a.x, a.y, b.x, b.y, c.x, c.y),
+            Seg::Close => pb.close(),
+        }
+    }
+    pb.finish()
+}
+
+/// The affine transform taking the three `from` points to the `to` points.
+fn affine_through(from: [Vec2; 3], to: [Vec2; 3]) -> Option<Transform> {
+    let (s1, s2) = (from[1] - from[0], from[2] - from[0]);
+    let (d1, d2) = (to[1] - to[0], to[2] - to[0]);
+    let det = s1.x * s2.y - s2.x * s1.y;
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    // M = D · S⁻¹
+    let inv = [[s2.y / det, -s2.x / det], [-s1.y / det, s1.x / det]];
+    let sx = d1.x * inv[0][0] + d2.x * inv[1][0];
+    let kx = d1.x * inv[0][1] + d2.x * inv[1][1];
+    let ky = d1.y * inv[0][0] + d2.y * inv[1][0];
+    let sy = d1.y * inv[0][1] + d2.y * inv[1][1];
+    let tx = to[0].x - (sx * from[0].x + kx * from[0].y);
+    let ty = to[0].y - (ky * from[0].x + sy * from[0].y);
+    let t = Transform::from_row(sx, ky, kx, sy, tx, ty);
+    (t.is_finite() && t.invert().is_some()).then_some(t)
+}
+
+fn pt(v: Vec2) -> Point {
+    Point::from_xy(v.x, v.y)
+}
+
+fn color(c: Color, opacity: f32) -> tiny_skia::Color {
+    tiny_skia::Color::from_rgba(
+        c.r.clamp(0.0, 1.0),
+        c.g.clamp(0.0, 1.0),
+        c.b.clamp(0.0, 1.0),
+        (c.a * opacity).clamp(0.0, 1.0),
+    )
+    .unwrap_or(tiny_skia::Color::TRANSPARENT)
+}
+
+fn blend_mode(mode: BlendMode) -> tiny_skia::BlendMode {
+    use tiny_skia::BlendMode as B;
+    match mode {
+        BlendMode::Normal => B::SourceOver,
+        BlendMode::Multiply => B::Multiply,
+        BlendMode::Screen => B::Screen,
+        BlendMode::Overlay => B::Overlay,
+        BlendMode::Darken => B::Darken,
+        BlendMode::Lighten => B::Lighten,
+        BlendMode::ColorDodge => B::ColorDodge,
+        BlendMode::ColorBurn => B::ColorBurn,
+        BlendMode::HardLight => B::HardLight,
+        BlendMode::SoftLight => B::SoftLight,
+        BlendMode::Difference => B::Difference,
+        BlendMode::Exclusion => B::Exclusion,
+        BlendMode::Add => B::Plus,
+        BlendMode::Hue => B::Hue,
+        BlendMode::Saturation => B::Saturation,
+        BlendMode::Color => B::Color,
+        BlendMode::Luminosity => B::Luminosity,
+    }
+}
+
+/// Converts rendered pixels for display in egui.
+pub fn to_color_image(pixmap: &Pixmap) -> egui::ColorImage {
+    egui::ColorImage::from_rgba_premultiplied(
+        [pixmap.width() as usize, pixmap.height() as usize],
+        pixmap.data(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ShapeKind;
+
+    fn pixel(p: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+        let c = p.pixel(x, y).unwrap();
+        [c.red(), c.green(), c.blue(), c.alpha()]
+    }
+
+    #[test]
+    fn renders_background_and_shapes() {
+        let mut project = Project {
+            background: Color::BLACK,
+            ..Project::default()
+        };
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        project.layer_mut(id).unwrap().fill.value = Color::new(1.0, 0.0, 0.0, 1.0);
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        assert_eq!((out.width(), out.height()), (480, 270));
+        assert_eq!(pixel(&out, 240, 135), [255, 0, 0, 255]);
+        assert_eq!(pixel(&out, 5, 5), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn blend_modes_combine_with_layers_below() {
+        let mut project = Project::default();
+        let below = project.add_shape(ShapeKind::Rectangle, 0);
+        project.layer_mut(below).unwrap().fill.value = Color::new(1.0, 0.5, 0.0, 1.0);
+        let above = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(above).unwrap();
+        layer.fill.value = Color::new(0.0, 1.0, 1.0, 1.0);
+        layer.blend = BlendMode::Multiply;
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        let [r, g, b, _] = pixel(&out, 240, 135);
+        assert_eq!((r, b), (0, 0));
+        assert!((120..=135).contains(&g), "multiplied green was {g}");
+    }
+
+    #[test]
+    fn gradients_run_from_start_to_end() {
+        let mut project = Project::default();
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(id).unwrap();
+        layer.fill.value = Color::new(1.0, 0.0, 0.0, 1.0);
+        layer.fill_end.value = Color::new(0.0, 0.0, 1.0, 1.0);
+        layer.fill_style = FillStyle::Linear;
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        // The square is 270 canvas px wide, centred: x from 825 to 1095.
+        let left = pixel(&out, (830.0 * 0.25) as u32, 135);
+        let right = pixel(&out, (1090.0 * 0.25) as u32, 135);
+        assert!(left[0] > 200 && left[2] < 50, "{left:?}");
+        assert!(right[2] > 200 && right[0] < 50, "{right:?}");
+    }
+
+    #[test]
+    fn affine_through_maps_points() {
+        let from = [vec2(0.0, 0.0), vec2(10.0, 0.0), vec2(0.0, 5.0)];
+        let to = [vec2(3.0, 4.0), vec2(3.0, 14.0), vec2(-2.0, 4.0)];
+        let t = affine_through(from, to).unwrap();
+        for (f, e) in from.iter().zip(to) {
+            let mut p = [pt(*f)];
+            t.map_points(&mut p);
+            assert!((p[0].x - e.x).abs() < 1e-4 && (p[0].y - e.y).abs() < 1e-4);
+        }
+    }
+}

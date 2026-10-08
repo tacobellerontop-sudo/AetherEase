@@ -5,7 +5,9 @@ use egui::{Color32, CornerRadius, DragValue, Grid, RichText, Sense, Stroke, Ui, 
 
 use crate::app::AetherApp;
 use crate::model::anim::Lerp;
-use crate::model::{Animated, Color, Easing, KeyTrack, Layer, LayerKind, ShapeKind};
+use crate::model::{
+    Animated, BlendMode, Color, Easing, FillStyle, KeyTrack, Layer, LayerKind, ShapeKind,
+};
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 use crate::ui::timeline::{diamond, timecode};
@@ -320,14 +322,57 @@ impl AetherApp {
                 LayerKind::Null | LayerKind::Camera { .. } => {}
             },
             Page::Fill => {
+                let is_image = matches!(layer.kind, LayerKind::Image { .. });
+                if !is_image {
+                    ui.horizontal_wrapped(|ui| {
+                        for style in FillStyle::ALL {
+                            let before = layer.fill_style;
+                            ui.selectable_value(&mut layer.fill_style, style, style.label());
+                            // Give a fresh gradient a visible second colour.
+                            if before == FillStyle::Solid
+                                && layer.fill_style != FillStyle::Solid
+                                && layer.fill_end.sample(frame as f32)
+                                    == layer.fill.sample(frame as f32)
+                            {
+                                layer.fill_end = Animated::new(gradient_partner(layer.fill.value));
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
                 Grid::new("fill_grid").num_columns(3).show(ui, |ui| {
-                    let label = if matches!(layer.kind, LayerKind::Image { .. }) {
-                        "Tint"
-                    } else {
-                        "Color"
-                    };
-                    anim_row(ui, label, &mut layer.fill, frame, color_edit);
+                    match (is_image, layer.fill_style) {
+                        (true, _) => {}
+                        (false, FillStyle::Solid) => {
+                            anim_row(ui, "Color", &mut layer.fill, frame, color_edit);
+                        }
+                        (false, style) => {
+                            let (a, b) = if style == FillStyle::Radial {
+                                ("Center", "Edge")
+                            } else {
+                                ("Start", "End")
+                            };
+                            anim_row(ui, a, &mut layer.fill, frame, color_edit);
+                            anim_row(ui, b, &mut layer.fill_end, frame, color_edit);
+                            if style == FillStyle::Linear {
+                                anim_row(ui, "Angle", &mut layer.gradient_angle, frame, |ui, v| {
+                                    ui.add(DragValue::new(v).speed(1.0).suffix("°")).changed()
+                                });
+                            }
+                        }
+                    }
                     anim_row(ui, "Opacity", &mut layer.opacity, frame, opacity_edit);
+                    ui.label("");
+                    ui.label("Blending");
+                    egui::ComboBox::from_id_salt("blend")
+                        .selected_text(layer.blend.label())
+                        .height(400.0)
+                        .show_ui(ui, |ui| {
+                            for mode in BlendMode::ALL {
+                                ui.selectable_value(&mut layer.blend, mode, mode.label());
+                            }
+                        });
+                    ui.end_row();
                 });
             }
             Page::Border => {
@@ -631,6 +676,16 @@ fn opacity_edit(ui: &mut Ui, v: &mut f32) -> bool {
         .changed();
     *v = percent / 100.0;
     changed
+}
+
+/// A second gradient colour that reads clearly against `c`.
+fn gradient_partner(c: Color) -> Color {
+    let luma = 0.3 * c.r + 0.59 * c.g + 0.11 * c.b;
+    if luma > 0.5 {
+        Color::new(c.r * 0.25, c.g * 0.25, c.b * 0.35, c.a)
+    } else {
+        Color::new(0.55 + c.r * 0.45, 0.4 + c.g * 0.6, 0.95, c.a)
+    }
 }
 
 fn color_edit(ui: &mut Ui, color: &mut Color) -> bool {

@@ -103,7 +103,7 @@ impl AetherApp {
         }
         ui.separator();
         if ui.button("Import image…").clicked() {
-            self.import_image(&ui.ctx().clone());
+            self.import_image();
         }
         ui.separator();
         ui.menu_button("Keyboard shortcuts", |ui| {
@@ -176,7 +176,7 @@ impl AetherApp {
                 self.add_text();
             }
             if icons::tile(ui, Icon::Image, "Image", false, size).clicked() {
-                self.import_image(&ui.ctx().clone());
+                self.import_image();
             }
         });
         ui.horizontal(|ui| {

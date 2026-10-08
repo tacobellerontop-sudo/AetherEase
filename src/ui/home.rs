@@ -7,9 +7,9 @@ use egui::{
 };
 
 use crate::app::AetherApp;
+use crate::compose;
 use crate::model::{Color, ProjectSettings};
 use crate::recent;
-use crate::render::{self, View};
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
@@ -157,23 +157,31 @@ impl AetherApp {
 
         let (title, detail) = match &item.project {
             Some(project) => {
-                // A live render of the project as its thumbnail.
+                // A render of the project a third of the way in, made once.
                 let canvas = vec2(project.width as f32, project.height as f32);
                 let zoom = (thumb.width() / canvas.x).min(thumb.height() / canvas.y);
-                let view = View {
-                    origin: thumb.center() - canvas * zoom * 0.5,
-                    zoom,
-                };
-                let thumb_painter = painter.with_clip_rect(thumb);
-                let frame = project.duration / 3;
-                render::draw_project(
-                    &thumb_painter,
-                    view,
-                    project,
-                    frame,
-                    &mut self.textures,
-                    false,
-                );
+                if item.thumbnail.is_none() {
+                    let scale = (zoom * ui.ctx().pixels_per_point()).min(1.0);
+                    let pixmap =
+                        compose::render(project, project.duration / 3, scale, &mut self.assets);
+                    let texture = ui.ctx().load_texture(
+                        format!("thumb-{}", path.display()),
+                        compose::to_color_image(&pixmap),
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.home_items[index].thumbnail = Some(texture);
+                }
+                let item = &self.home_items[index];
+                let project = item.project.as_ref().expect("matched above");
+                if let Some(texture) = &item.thumbnail {
+                    let image = Rect::from_center_size(thumb.center(), canvas * zoom);
+                    painter.image(
+                        texture.id(),
+                        image,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                }
                 (
                     project.name.clone(),
                     format!(

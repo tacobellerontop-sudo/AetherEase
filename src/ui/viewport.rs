@@ -6,6 +6,7 @@ use egui::{
 };
 
 use crate::app::AetherApp;
+use crate::compose;
 use crate::model::{LayerKind, Project};
 use crate::render::{self, View};
 use crate::ui::icons::{self, Icon};
@@ -14,6 +15,14 @@ use crate::ui::theme;
 const HANDLE_RADIUS: f32 = 6.0;
 const ROTATE_HANDLE_OFFSET: f32 = 28.0;
 
+/// The rendered frame shown on the canvas, re-rendered only when the
+/// project, the frame or the zoom changes.
+#[derive(Default)]
+pub struct Preview {
+    texture: Option<egui::TextureHandle>,
+    key: Option<(Project, i32, u32)>,
+}
+
 pub struct ViewportState {
     /// When true the canvas zooms to fit the panel.
     pub fit: bool,
@@ -21,6 +30,7 @@ pub struct ViewportState {
     /// Offset of the canvas centre from the panel centre, in screen points.
     pub pan: Vec2,
     drag: Option<GizmoDrag>,
+    preview: Preview,
 }
 
 impl Default for ViewportState {
@@ -30,6 +40,7 @@ impl Default for ViewportState {
             zoom: 1.0,
             pan: Vec2::ZERO,
             drag: None,
+            preview: Preview::default(),
         }
     }
 }
@@ -81,14 +92,8 @@ impl AetherApp {
             zoom: self.viewport.zoom,
         };
 
-        render::draw_project(
-            &painter,
-            view,
-            &self.project,
-            self.frame,
-            &mut self.textures,
-            true,
-        );
+        self.draw_preview(ui, &painter, view);
+        render::draw_guides(&painter, view, &self.project, self.frame);
         draw_outside_dim(&painter, rect, view, &self.project);
 
         if self.project.layers.is_empty() {
@@ -104,6 +109,48 @@ impl AetherApp {
         self.handle_gizmo(ui, view, &response);
         self.draw_selection(&painter, view);
         self.viewport_overlay(ui, rect);
+    }
+
+    /// Paints the composited frame onto the canvas, rendering it first if
+    /// anything that affects it has changed.
+    fn draw_preview(&mut self, ui: &Ui, painter: &egui::Painter, view: View) {
+        // Render at screen resolution, but never above 2× the project size.
+        let mut scale = (view.zoom * ui.ctx().pixels_per_point()).clamp(0.05, 2.0);
+        let longest = self.project.width.max(self.project.height) as f32;
+        scale = scale.min(4096.0 / longest);
+        // Quantise so tiny zoom changes don't force a re-render.
+        let scale = (scale * 64.0).round() / 64.0;
+        let preview = &mut self.viewport.preview;
+        let fresh = preview.key.as_ref().is_some_and(|(project, frame, s)| {
+            *frame == self.frame && *s == scale.to_bits() && *project == self.project
+        });
+        if !fresh || preview.texture.is_none() {
+            let pixmap = compose::render(&self.project, self.frame, scale, &mut self.assets);
+            let image = compose::to_color_image(&pixmap);
+            match &mut preview.texture {
+                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                None => {
+                    preview.texture = Some(ui.ctx().load_texture(
+                        "canvas-preview",
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ))
+                }
+            }
+            preview.key = Some((self.project.clone(), self.frame, scale.to_bits()));
+        }
+        if let Some(texture) = &preview.texture {
+            let canvas = Rect::from_min_size(
+                view.origin,
+                vec2(self.project.width as f32, self.project.height as f32) * view.zoom,
+            );
+            painter.image(
+                texture.id(),
+                canvas,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
     }
 
     fn handle_zoom_and_pan(&mut self, ui: &Ui, rect: Rect, response: &egui::Response) {
@@ -137,7 +184,7 @@ impl AetherApp {
         if let Some(pointer) = response.hover_pos()
             && self.viewport.drag.is_none()
         {
-            match self.handle_at(&ctx, view, pointer) {
+            match self.handle_at(view, pointer) {
                 Some(Handle::Rotate) => ctx.set_cursor_icon(CursorIcon::Alias),
                 Some(Handle::Corner(_)) => ctx.set_cursor_icon(CursorIcon::Crosshair),
                 None => {}
@@ -147,7 +194,7 @@ impl AetherApp {
         if response.clicked() {
             let picked = response
                 .interact_pointer_pos()
-                .and_then(|p| render::pick_layer(&ctx, &self.project, frame, view.to_canvas(p)));
+                .and_then(|p| render::pick_layer(&self.project, frame, view.to_canvas(p)));
             self.select(picked);
         }
 
@@ -158,7 +205,7 @@ impl AetherApp {
                 .input(|i| i.pointer.press_origin())
                 .or(response.interact_pointer_pos())
         {
-            self.viewport.drag = self.start_gizmo_drag(&ctx, view, pointer);
+            self.viewport.drag = self.start_gizmo_drag(view, pointer);
         }
 
         if response.dragged_by(PointerButton::Primary)
@@ -187,7 +234,7 @@ impl AetherApp {
                     // The pointer in the layer's own axes, scaled but not
                     // rotated, so it compares directly with the corner.
                     let local = self.project.layer(id).and_then(|layer| {
-                        let geom = render::layer_geom(&ctx, &self.project, layer, frame as f32);
+                        let geom = render::layer_geom(&self.project, layer, frame as f32);
                         let s = layer.transform.scale.sample(frame as f32);
                         Some((geom.canvas_to_local(pointer_canvas)? - geom.anchor) * s)
                     });
@@ -215,7 +262,7 @@ impl AetherApp {
                     start_angle,
                 } => {
                     let center = self.project.layer(id).map(|layer| {
-                        let geom = render::layer_geom(&ctx, &self.project, layer, frame as f32);
+                        let geom = render::layer_geom(&self.project, layer, frame as f32);
                         view.to_screen(geom.anchor_canvas())
                     });
                     if let Some(center) = center
@@ -239,7 +286,7 @@ impl AetherApp {
     }
 
     /// The selected layer's geometry, if it can be edited on the canvas.
-    fn editable_selection(&self, ctx: &egui::Context) -> Option<(u64, render::LayerGeom)> {
+    fn editable_selection(&self) -> Option<(u64, render::LayerGeom)> {
         let layer = self.selected_layer()?;
         if !layer.is_active_at(self.frame)
             || layer.locked
@@ -247,7 +294,7 @@ impl AetherApp {
         {
             return None;
         }
-        let geom = render::layer_geom(ctx, &self.project, layer, self.frame as f32);
+        let geom = render::layer_geom(&self.project, layer, self.frame as f32);
         geom.in_front().then_some((layer.id, geom))
     }
 
@@ -269,8 +316,8 @@ impl AetherApp {
             .hit_plane(&parent, p, z)
     }
 
-    fn handle_at(&self, ctx: &egui::Context, view: View, pointer: Pos2) -> Option<Handle> {
-        let (_, geom) = self.editable_selection(ctx)?;
+    fn handle_at(&self, view: View, pointer: Pos2) -> Option<Handle> {
+        let (_, geom) = self.editable_selection()?;
         if pointer.distance(rotate_handle_pos(view, &geom)) <= HANDLE_RADIUS + 3.0 {
             return Some(Handle::Rotate);
         }
@@ -282,14 +329,9 @@ impl AetherApp {
             .map(Handle::Corner)
     }
 
-    fn start_gizmo_drag(
-        &mut self,
-        ctx: &egui::Context,
-        view: View,
-        pointer: Pos2,
-    ) -> Option<GizmoDrag> {
+    fn start_gizmo_drag(&mut self, view: View, pointer: Pos2) -> Option<GizmoDrag> {
         let frame = self.frame as f32;
-        if let Some(handle) = self.handle_at(ctx, view, pointer) {
+        if let Some(handle) = self.handle_at(view, pointer) {
             let layer = self.selected_layer()?;
             let t = &layer.transform;
             return Some(match handle {
@@ -299,7 +341,7 @@ impl AetherApp {
                     corner: corner - t.anchor,
                 },
                 Handle::Rotate => {
-                    let geom = render::layer_geom(ctx, &self.project, layer, frame);
+                    let geom = render::layer_geom(&self.project, layer, frame);
                     let d = pointer - view.to_screen(geom.anchor_canvas());
                     GizmoDrag::Rotate {
                         id: layer.id,
@@ -314,14 +356,14 @@ impl AetherApp {
         // Dragging inside the current selection moves it even if another layer
         // is on top; otherwise pick whatever is under the pointer.
         let id = self
-            .editable_selection(ctx)
+            .editable_selection()
             .filter(|(id, _)| {
                 self.project
                     .layer(*id)
-                    .is_some_and(|l| render::hit_test(ctx, &self.project, l, frame, pointer_canvas))
+                    .is_some_and(|l| render::hit_test(&self.project, l, frame, pointer_canvas))
             })
             .map(|(id, _)| id)
-            .or_else(|| render::pick_layer(ctx, &self.project, self.frame, pointer_canvas));
+            .or_else(|| render::pick_layer(&self.project, self.frame, pointer_canvas));
         self.select(id);
         let layer = self.project.layer(id?)?;
         Some(GizmoDrag::Move {
@@ -338,7 +380,7 @@ impl AetherApp {
         if !layer.is_active_at(self.frame) || matches!(layer.kind, LayerKind::Camera { .. }) {
             return;
         }
-        let geom = render::layer_geom(painter.ctx(), &self.project, layer, self.frame as f32);
+        let geom = render::layer_geom(&self.project, layer, self.frame as f32);
         if !geom.in_front() {
             return;
         }

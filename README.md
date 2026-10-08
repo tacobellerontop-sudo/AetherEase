@@ -30,6 +30,12 @@ grow into a real alternative to After Effects.
   Timing), and the timeline along the bottom with centred playback controls.
 - **Layers**: rectangles (with rounded corners), ellipses, triangles,
   polygons, stars, text, and imported images (PNG, JPEG, WebP, BMP, GIF).
+- **Color page**: solid fills or linear and radial gradients (with
+  keyframable colours and angle), opacity, and 17 blending modes (Multiply,
+  Screen, Overlay, Add, Difference, Hue, and more).
+- **One renderer for everything**: frames are composited on the CPU with
+  tiny-skia, so the canvas, thumbnails and (soon) export match exactly. Text
+  is drawn from glyph outlines, so it stays sharp under any transform.
 - **Null layers**: invisible layers (a dashed box in the editor, nothing in
   the output) that other layers can be parented to.
 - **Parenting**: pick a Parent on the Move page and the layer follows that
@@ -90,8 +96,10 @@ through wgpu. CI builds a Windows release binary for every pull request.
 |---|---|
 | `src/model/anim.rs` | `Animated<T>` values, keyframes, easing |
 | `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
+| `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending |
+| `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
-| `src/render.rs` | Draws layers, transforms, hit testing, image textures |
+| `src/render.rs` | Layer geometry, paint order, hit testing, editor guides |
 | `src/history.rs` | Snapshot-based undo/redo |
 | `src/app.rs` | Screens, editor state, file handling, autosave, shortcuts, playback |
 | `src/recent.rs` | Recent projects list and the projects folder |
