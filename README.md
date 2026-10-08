@@ -21,8 +21,11 @@ grow into a real alternative to After Effects.
 - **Autosave**: new projects are saved to your projects folder
   (`%APPDATA%\AetherEase\projects` on Windows) and every change is saved
   automatically a moment after you make it.
-- **Editor layout** modelled on Alight Motion: canvas preview in the middle,
-  property inspector on the right, timeline along the bottom.
+- **Editor layout** modelled on Alight Motion and adapted for desktop: a
+  slim top bar (back to home, project name, undo/redo, a "more" menu), the
+  canvas with a round **+** button for adding layers, a property panel on the
+  right organised as icon pages (Move, Shape/Text/Image, Color, Border,
+  Timing), and the timeline along the bottom with centred playback controls.
 - **Layers**: rectangles (with rounded corners), ellipses, triangles,
   polygons, stars, text, and imported images (PNG, JPEG, WebP, BMP, GIF).
 - **Canvas editing**: click to select, drag to move, corner handles to scale

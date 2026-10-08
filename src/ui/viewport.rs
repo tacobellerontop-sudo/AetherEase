@@ -1,13 +1,14 @@
 //! The canvas preview with on-canvas move, scale and rotate handles.
 
 use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, FontId, PointerButton, Pos2, Rect, Sense, Stroke,
-    StrokeKind, Ui, UiBuilder, Vec2, vec2,
+    Align2, Color32, CornerRadius, CursorIcon, FontId, PointerButton, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, Ui, UiBuilder, Vec2, vec2,
 };
 
 use crate::app::AetherApp;
 use crate::model::Project;
 use crate::render::{self, View, rotate};
+use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
 const HANDLE_RADIUS: f32 = 6.0;
@@ -333,33 +334,49 @@ impl AetherApp {
         }
     }
 
+    /// Floating controls over the canvas: zoom in the bottom-left corner and
+    /// the round add-layer button in the bottom-right.
     fn viewport_overlay(&mut self, ui: &mut Ui, rect: Rect) {
-        let area = Rect::from_min_size(
-            rect.left_top() + vec2(10.0, 10.0),
-            vec2(rect.width() - 20.0, 28.0),
-        );
-        ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
-            ui.horizontal(|ui| {
-                let fit = ui
-                    .selectable_label(self.viewport.fit, "Fit")
-                    .on_hover_text("Fit the canvas to the panel");
-                if fit.clicked() {
-                    self.viewport.fit = true;
-                }
-                if ui.button("100%").clicked() {
-                    self.viewport.fit = false;
-                    self.viewport.zoom = 1.0;
-                    self.viewport.pan = Vec2::ZERO;
-                }
-                ui.label(format!(
-                    "{:.0}%  ·  {}×{}  ·  {} fps",
-                    self.viewport.zoom * 100.0,
-                    self.project.width,
-                    self.project.height,
-                    self.project.fps
-                ));
-            });
+        let pill = Rect::from_min_size(rect.left_bottom() + vec2(12.0, -46.0), vec2(220.0, 34.0));
+        ui.scope_builder(UiBuilder::new().max_rect(pill), |ui| {
+            egui::Frame::NONE
+                .fill(theme::BG_PANEL.gamma_multiply(0.92))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::symmetric(4, 2))
+                .show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        if icons::icon_button(
+                            ui,
+                            Icon::Fit,
+                            "Fit to window",
+                            self.viewport.fit,
+                            true,
+                            26.0,
+                        )
+                        .clicked()
+                        {
+                            self.viewport.fit = true;
+                        }
+                        let actual = egui::Button::new(RichText::new("1:1").small()).frame(false);
+                        if ui.add(actual).on_hover_text("Actual size").clicked() {
+                            self.viewport.fit = false;
+                            self.viewport.zoom = 1.0;
+                            self.viewport.pan = Vec2::ZERO;
+                        }
+                        ui.label(
+                            RichText::new(format!("{:.0}%", self.viewport.zoom * 100.0))
+                                .small()
+                                .weak(),
+                        );
+                        ui.add_space(4.0);
+                    });
+                });
         });
+
+        let plus =
+            Rect::from_center_size(rect.right_bottom() + vec2(-44.0, -44.0), Vec2::splat(52.0));
+        self.add_layer_button(ui, plus);
     }
 }
 

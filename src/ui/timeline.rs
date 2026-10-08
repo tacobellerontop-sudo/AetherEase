@@ -10,12 +10,13 @@ use egui::{
 
 use crate::app::{AetherApp, KeySelection};
 use crate::model::{Easing, PropId};
+use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
 const LABEL_WIDTH: f32 = 230.0;
 const RULER_HEIGHT: f32 = 24.0;
-const LAYER_ROW: f32 = 28.0;
-const PROP_ROW: f32 = 22.0;
+const LAYER_ROW: f32 = 36.0;
+const PROP_ROW: f32 = 24.0;
 const EDGE_GRAB: f32 = 6.0;
 
 #[derive(Default)]
@@ -142,65 +143,103 @@ impl AetherApp {
             .show(ui, |ui| self.rows_ui(ui, scale));
     }
 
+    /// Timecode on the left, playback controls centred, timeline zoom on the right.
     fn transport_ui(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            if ui.button("⏮").on_hover_text("First frame (Home)").clicked() {
+        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+        let row_layout = |layout| egui::UiBuilder::new().max_rect(row).layout(layout);
+
+        ui.scope_builder(
+            row_layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(timecode(self.frame, self.project.fps))
+                        .monospace()
+                        .size(15.0)
+                        .color(ui.visuals().strong_text_color()),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "/ {}",
+                        timecode(self.project.duration, self.project.fps)
+                    ))
+                    .monospace()
+                    .weak(),
+                );
+                let mut frame = self.frame;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut frame)
+                            .range(0..=self.project.duration - 1)
+                            .prefix("f "),
+                    )
+                    .on_hover_text("Current frame")
+                    .changed()
+                {
+                    self.set_frame(frame);
+                }
+            },
+        );
+
+        let center = Rect::from_center_size(row.center(), vec2(5.0 * 34.0 + 48.0, row.height()));
+        let center_layout = egui::UiBuilder::new()
+            .max_rect(center)
+            .layout(egui::Layout::left_to_right(egui::Align::Center));
+        ui.scope_builder(center_layout, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if icons::button(ui, Icon::ToStart, "First frame (Home)").clicked() {
                 self.set_frame(0);
             }
-            if ui.button("◀").on_hover_text("Previous frame (←)").clicked() {
+            if icons::button(ui, Icon::PrevFrame, "Previous frame (←)").clicked() {
                 self.set_frame(self.frame - 1);
             }
-            let play = if self.playing { "⏸" } else { "▶" };
-            let play_button =
-                egui::Button::new(egui::RichText::new(play).size(16.0)).fill(theme::ACCENT_SOFT);
-            if ui
-                .add(play_button)
+            let (rect, play) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::click());
+            let fill = if play.hovered() {
+                theme::ACCENT
+            } else {
+                theme::ACCENT_SOFT
+            };
+            ui.painter().circle_filled(rect.center(), 19.0, fill);
+            let glyph = if self.playing {
+                Icon::Pause
+            } else {
+                Icon::Play
+            };
+            icons::paint(ui.painter(), rect.shrink(12.0), glyph, Color32::WHITE);
+            if play
+                .on_hover_cursor(CursorIcon::PointingHand)
                 .on_hover_text("Play / pause (Space)")
                 .clicked()
             {
                 self.toggle_playback();
             }
-            if ui.button("▶|").on_hover_text("Next frame (→)").clicked() {
+            if icons::button(ui, Icon::NextFrame, "Next frame (→)").clicked() {
                 self.set_frame(self.frame + 1);
             }
-            if ui.button("⏭").on_hover_text("Last frame (End)").clicked() {
+            if icons::button(ui, Icon::ToEnd, "Last frame (End)").clicked() {
                 self.set_frame(self.project.duration - 1);
             }
-            ui.toggle_value(&mut self.looping, "Loop");
-            ui.separator();
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} / {}",
-                    timecode(self.frame, self.project.fps),
-                    timecode(self.project.duration, self.project.fps)
-                ))
-                .monospace(),
-            );
-            let mut frame = self.frame;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut frame)
-                        .range(0..=self.project.duration - 1)
-                        .prefix("frame "),
-                )
-                .changed()
-            {
-                self.set_frame(frame);
+            if icons::toggle(ui, Icon::Loop, "Loop playback", self.looping).clicked() {
+                self.looping = !self.looping;
             }
-            ui.separator();
-            ui.menu_button("+ Add layer", |ui| self.add_layer_menu(ui));
+        });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button("Fit")
-                    .on_hover_text("Show the whole composition")
-                    .clicked()
+        ui.scope_builder(
+            row_layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| {
+                ui.add_space(6.0);
+                if icons::toggle(
+                    ui,
+                    Icon::Fit,
+                    "Fit the whole timeline (Ctrl+scroll zooms)",
+                    self.timeline.zoom.is_none(),
+                )
+                .clicked()
                 {
                     self.timeline.zoom = None;
                 }
-                ui.label(egui::RichText::new("Ctrl+scroll to zoom").weak().small());
-            });
-        });
+            },
+        );
     }
 
     fn update_drag(&mut self, ui: &Ui, scale: TimeScale) {
@@ -340,16 +379,9 @@ impl AetherApp {
             }
         }
 
-        // Current time in the label column.
+        // Keep the label column plain; the transport bar shows the time.
         let label_rect = Rect::from_x_y_ranges(rect.left()..=scale.x0, rect.y_range());
         painter.rect_filled(label_rect, 0.0, ui.visuals().panel_fill);
-        painter.text(
-            label_rect.left_center() + vec2(6.0, 0.0),
-            Align2::LEFT_CENTER,
-            timecode(self.frame, self.project.fps),
-            FontId::monospace(13.0),
-            theme::PLAYHEAD,
-        );
 
         // Playhead handle.
         let x = scale.x(self.frame as f32);
@@ -434,20 +466,17 @@ impl AetherApp {
             painter.text(
                 Pos2::new(rect.left() + 12.0, rect.top() + 16.0),
                 Align2::LEFT_CENTER,
-                "No layers yet. Use \"+ Add layer\" or the toolbar above the canvas.",
+                "No layers yet. Click the + button on the canvas to add one.",
                 FontId::proportional(13.0),
                 ui.visuals().weak_text_color(),
             );
         }
 
         let mut y = rect.top();
-        for (i, row) in rows.iter().enumerate() {
+        for row in &rows {
             match *row {
                 Row::Layer(id) => {
                     let row_rect = Rect::from_x_y_ranges(rect.x_range(), y..=y + LAYER_ROW);
-                    if i % 2 == 1 {
-                        painter.rect_filled(row_rect, 0.0, ui.visuals().faint_bg_color);
-                    }
                     self.layer_row(
                         ui,
                         &painter,
@@ -509,11 +538,30 @@ impl AetherApp {
         let color = theme::layer_color(&layer.kind);
         let name = layer.name.clone();
         let icon = theme::layer_icon(&layer.kind);
+        let row_hovered = ui.rect_contains_pointer(row);
         let (in_frame, out_frame) = (layer.in_frame, layer.out_frame);
         let key_frames = layer.all_key_frames();
 
+        let label_area = Rect::from_x_y_ranges(
+            row.left() + 2.0..=scale.x0 - 4.0,
+            row.top() + 2.0..=row.bottom() - 2.0,
+        );
         if selected {
-            painter.rect_filled(row, 0.0, theme::ACCENT_SOFT.gamma_multiply(0.35));
+            painter.rect_filled(
+                label_area,
+                CornerRadius::same(8),
+                theme::ACCENT_SOFT.gamma_multiply(0.55),
+            );
+        } else if row_hovered {
+            painter.rect_filled(
+                label_area,
+                CornerRadius::same(8),
+                ui.visuals()
+                    .widgets
+                    .hovered
+                    .weak_bg_fill
+                    .gamma_multiply(0.5),
+            );
         }
 
         // --- Label column: expand, visibility, lock, name.
@@ -522,55 +570,67 @@ impl AetherApp {
         } else {
             ui.visuals().weak_text_color()
         };
-        let mut x = row.left() + 4.0;
-        let mut small_button = |ui: &mut Ui, glyph: &str, salt: &str, active: bool| {
-            let r = Rect::from_min_size(Pos2::new(x, row.top()), vec2(22.0, row.height()));
-            x += 22.0;
-            let response = ui.interact(r, Id::new((salt, id)), Sense::click());
-            let c = if response.hovered() {
-                Color32::WHITE
-            } else if active {
-                text_color
-            } else {
-                ui.visuals().weak_text_color().gamma_multiply(0.6)
+        let mut x = row.left() + 6.0;
+        let mut small_button =
+            |ui: &mut Ui, glyph: Icon, salt: &str, active: bool, always: bool| {
+                let r =
+                    Rect::from_center_size(Pos2::new(x + 11.0, row.center().y), Vec2::splat(22.0));
+                x += 24.0;
+                let response = ui.interact(r, Id::new((salt, id)), Sense::click());
+                // Visibility and lock icons only show on hover unless they're
+                // switched away from the default, which keeps rows quiet.
+                if always || row_hovered || !active {
+                    let c = if response.hovered() {
+                        Color32::WHITE
+                    } else if active {
+                        text_color
+                    } else {
+                        theme::PLAYHEAD.gamma_multiply(0.9)
+                    };
+                    icons::paint(painter, r.shrink(5.0), glyph, c);
+                }
+                response.on_hover_cursor(CursorIcon::PointingHand)
             };
-            painter.text(
-                r.center(),
-                Align2::CENTER_CENTER,
-                glyph,
-                FontId::proportional(13.0),
-                c,
-            );
-            response
+        let expand_icon = if expanded {
+            Icon::Expand
+        } else {
+            Icon::Collapse
         };
-        if small_button(ui, if expanded { "⏷" } else { "⏵" }, "expand", true)
+        if small_button(ui, expand_icon, "expand", true, true)
             .on_hover_text("Show keyframed properties")
             .clicked()
             && !self.timeline.expanded.remove(&id)
         {
             self.timeline.expanded.insert(id);
         }
-        let toggle_visible = small_button(ui, "👁", "visible", visible)
+        let eye = if visible { Icon::Eye } else { Icon::EyeOff };
+        let toggle_visible = small_button(ui, eye, "visible", visible, false)
             .on_hover_text("Show / hide")
             .clicked();
-        let toggle_lock = small_button(ui, "🔒", "lock", locked)
+        let lock = if locked { Icon::Lock } else { Icon::Unlock };
+        let toggle_lock = small_button(ui, lock, "lock", !locked, false)
             .on_hover_text("Lock / unlock")
             .clicked();
 
-        let name_rect = Rect::from_x_y_ranges(x..=scale.x0 - 4.0, row.y_range());
-        let name_response = ui.interact(name_rect, Id::new(("name", id)), Sense::click());
-        painter.text(
-            name_rect.left_center() + vec2(2.0, 0.0),
-            Align2::LEFT_CENTER,
-            icon,
-            FontId::proportional(13.0),
-            color,
+        // A coloured "thumbnail" chip with the layer type's icon, then the name.
+        let chip = Rect::from_center_size(Pos2::new(x + 13.0, row.center().y), Vec2::splat(24.0));
+        painter.rect_filled(
+            chip,
+            CornerRadius::same(6),
+            color.gamma_multiply(if visible { 0.9 } else { 0.35 }),
+        );
+        icons::paint(painter, chip.shrink(5.0), icon, Color32::WHITE);
+        let name_rect = Rect::from_x_y_ranges(chip.right() + 8.0..=scale.x0 - 8.0, row.y_range());
+        let name_response = ui.interact(
+            Rect::from_x_y_ranges(chip.left()..=scale.x0 - 4.0, row.y_range()),
+            Id::new(("name", id)),
+            Sense::click(),
         );
         painter.with_clip_rect(name_rect).text(
-            name_rect.left_center() + vec2(20.0, 0.0),
+            name_rect.left_center(),
             Align2::LEFT_CENTER,
             &name,
-            FontId::proportional(13.0),
+            FontId::proportional(13.5),
             text_color,
         );
         if name_response.clicked() {
@@ -580,18 +640,18 @@ impl AetherApp {
         // --- Track: the layer's bar from in to out.
         let bar = Rect::from_x_y_ranges(
             scale.x(in_frame as f32)..=scale.x(out_frame as f32),
-            row.top() + 4.0..=row.bottom() - 4.0,
+            row.top() + 5.0..=row.bottom() - 5.0,
         );
         let fill = if visible {
             color.gamma_multiply(0.75)
         } else {
             color.gamma_multiply(0.3)
         };
-        track_painter.rect_filled(bar, CornerRadius::same(4), fill);
+        track_painter.rect_filled(bar, CornerRadius::same(7), fill);
         if selected {
             track_painter.rect_stroke(
                 bar,
-                CornerRadius::same(4),
+                CornerRadius::same(7),
                 Stroke::new(1.5, Color32::WHITE),
                 StrokeKind::Inside,
             );
@@ -599,10 +659,10 @@ impl AetherApp {
         track_painter
             .with_clip_rect(bar.intersect(track_clip))
             .text(
-                bar.left_center() + vec2(6.0, 0.0),
+                bar.left_center() + vec2(10.0, 0.0),
                 Align2::LEFT_CENTER,
                 &name,
-                FontId::proportional(11.0),
+                FontId::proportional(12.0),
                 Color32::WHITE,
             );
         for frame in &key_frames {

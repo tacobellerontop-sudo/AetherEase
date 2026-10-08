@@ -10,6 +10,7 @@ use crate::app::AetherApp;
 use crate::model::{Color, ProjectSettings};
 use crate::recent;
 use crate::render::{self, View};
+use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
 const MAX_WIDTH: f32 = 1080.0;
@@ -67,11 +68,36 @@ impl AetherApp {
         );
         ui.add_space(20.0);
 
-        let create = egui::Button::new(RichText::new("+   Create new project").size(18.0).strong())
-            .fill(theme::ACCENT_SOFT)
-            .corner_radius(CornerRadius::same(10))
-            .min_size(vec2(width, 64.0));
-        if ui.add(create).clicked() {
+        // The one big call to action, like Alight Motion's "+" on its home.
+        let (rect, create) = ui.allocate_exact_size(vec2(width, 72.0), Sense::click());
+        let fill = if create.hovered() {
+            theme::ACCENT
+        } else {
+            theme::ACCENT_SOFT
+        };
+        ui.painter().rect_filled(rect, CornerRadius::same(14), fill);
+        let galley = ui.painter().layout_no_wrap(
+            "Create new project".into(),
+            FontId::proportional(18.0),
+            Color32::WHITE,
+        );
+        let content_width = 28.0 + 12.0 + galley.size().x;
+        let left = rect.center().x - content_width * 0.5;
+        let circle = Pos2::new(left + 14.0, rect.center().y);
+        ui.painter()
+            .circle_filled(circle, 14.0, Color32::WHITE.gamma_multiply(0.2));
+        icons::paint(
+            ui.painter(),
+            Rect::from_center_size(circle, Vec2::splat(16.0)),
+            Icon::Plus,
+            Color32::WHITE,
+        );
+        ui.painter().galley(
+            Pos2::new(left + 40.0, rect.center().y - galley.size().y * 0.5),
+            galley,
+            Color32::WHITE,
+        );
+        if create.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             self.new_project();
         }
 
@@ -124,7 +150,7 @@ impl AetherApp {
         let painter = ui.painter_at(rect);
         let visuals = ui.visuals();
 
-        painter.rect_filled(rect, CornerRadius::same(10), visuals.panel_fill);
+        painter.rect_filled(rect, CornerRadius::same(12), visuals.panel_fill);
         let thumb =
             Rect::from_min_size(rect.min, vec2(size.x, size.y - CARD_TEXT_HEIGHT)).shrink(6.0);
         painter.rect_filled(thumb, CornerRadius::same(6), Color32::from_gray(10));

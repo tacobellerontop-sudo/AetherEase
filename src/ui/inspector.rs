@@ -1,11 +1,12 @@
 //! The right-hand panel: properties of the selected layer, or of the project
 //! when nothing is selected.
 
-use egui::{CollapsingHeader, Color32, DragValue, Grid, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{Color32, CornerRadius, DragValue, Grid, RichText, Sense, Stroke, Ui, Vec2, vec2};
 
 use crate::app::AetherApp;
 use crate::model::anim::Lerp;
 use crate::model::{Animated, Color, Easing, KeyTrack, Layer, LayerKind, ShapeKind};
+use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 use crate::ui::timeline::diamond;
 
@@ -30,83 +31,88 @@ impl AetherApp {
     }
 
     fn project_inspector(&mut self, ui: &mut Ui) {
-        ui.heading("Project");
-        ui.add_space(4.0);
+        ui.label(RichText::new("Project settings").size(16.0).strong());
+        ui.add_space(6.0);
         let fps_before = self.project.fps;
         let project = &mut self.project;
-        Grid::new("project_grid")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(&mut project.name);
-                ui.end_row();
+        card(ui, |ui| {
+            Grid::new("project_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut project.name);
+                    ui.end_row();
 
-                ui.label("Preset");
-                let current = RESOLUTIONS
-                    .iter()
-                    .find(|(_, w, h)| *w == project.width && *h == project.height)
-                    .map_or("Custom", |(name, ..)| name);
-                egui::ComboBox::from_id_salt("resolution")
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for (name, w, h) in RESOLUTIONS {
-                            if ui
-                                .selectable_label(project.width == w && project.height == h, name)
-                                .clicked()
-                            {
-                                project.width = w;
-                                project.height = h;
+                    ui.label("Preset");
+                    let current = RESOLUTIONS
+                        .iter()
+                        .find(|(_, w, h)| *w == project.width && *h == project.height)
+                        .map_or("Custom", |(name, ..)| name);
+                    egui::ComboBox::from_id_salt("resolution")
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for (name, w, h) in RESOLUTIONS {
+                                if ui
+                                    .selectable_label(
+                                        project.width == w && project.height == h,
+                                        name,
+                                    )
+                                    .clicked()
+                                {
+                                    project.width = w;
+                                    project.height = h;
+                                }
                             }
-                        }
-                    });
-                ui.end_row();
+                        });
+                    ui.end_row();
 
-                ui.label("Size");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        DragValue::new(&mut project.width)
-                            .range(16..=8192)
-                            .suffix(" px"),
-                    );
-                    ui.label("×");
-                    ui.add(
-                        DragValue::new(&mut project.height)
-                            .range(16..=8192)
-                            .suffix(" px"),
-                    );
+                    ui.label("Size");
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            DragValue::new(&mut project.width)
+                                .range(16..=8192)
+                                .suffix(" px"),
+                        );
+                        ui.label("×");
+                        ui.add(
+                            DragValue::new(&mut project.height)
+                                .range(16..=8192)
+                                .suffix(" px"),
+                        );
+                    });
+                    ui.end_row();
+
+                    ui.label("Frame rate");
+                    egui::ComboBox::from_id_salt("fps")
+                        .selected_text(format!("{} fps", project.fps))
+                        .show_ui(ui, |ui| {
+                            for fps in FRAME_RATES {
+                                ui.selectable_value(&mut project.fps, fps, format!("{fps} fps"));
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Duration");
+                    let mut seconds = project.duration as f32 / fps_before as f32;
+                    if ui
+                        .add(
+                            DragValue::new(&mut seconds)
+                                .range(0.1..=3600.0)
+                                .speed(0.1)
+                                .suffix(" s"),
+                        )
+                        .changed()
+                    {
+                        project.duration = (seconds * fps_before as f32).round().max(1.0) as i32;
+                    }
+                    ui.end_row();
+
+                    ui.label("Background");
+                    color_edit(ui, &mut project.background);
+                    ui.end_row();
                 });
-                ui.end_row();
-
-                ui.label("Frame rate");
-                egui::ComboBox::from_id_salt("fps")
-                    .selected_text(format!("{} fps", project.fps))
-                    .show_ui(ui, |ui| {
-                        for fps in FRAME_RATES {
-                            ui.selectable_value(&mut project.fps, fps, format!("{fps} fps"));
-                        }
-                    });
-                ui.end_row();
-
-                ui.label("Duration");
-                let mut seconds = project.duration as f32 / fps_before as f32;
-                if ui
-                    .add(
-                        DragValue::new(&mut seconds)
-                            .range(0.1..=3600.0)
-                            .speed(0.1)
-                            .suffix(" s"),
-                    )
-                    .changed()
-                {
-                    project.duration = (seconds * fps_before as f32).round().max(1.0) as i32;
-                }
-                ui.end_row();
-
-                ui.label("Background");
-                color_edit(ui, &mut project.background);
-                ui.end_row();
-            });
+        });
 
         // Keep the same length in seconds when the frame rate changes.
         if self.project.fps != fps_before {
@@ -163,85 +169,134 @@ impl AetherApp {
             return;
         };
 
+        // Header: type chip and name, then the layer's quick actions.
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(theme::layer_icon(&layer.kind))
-                    .color(theme::layer_color(&layer.kind)),
+            let (chip, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
+            ui.painter()
+                .rect_filled(chip, CornerRadius::same(8), theme::layer_color(&layer.kind));
+            icons::paint(
+                ui.painter(),
+                chip.shrink(7.0),
+                theme::layer_icon(&layer.kind),
+                Color32::WHITE,
             );
-            ui.add(egui::TextEdit::singleline(&mut layer.name).desired_width(f32::INFINITY));
+            ui.add(
+                egui::TextEdit::singleline(&mut layer.name)
+                    .font(egui::FontId::proportional(15.0))
+                    .desired_width(f32::INFINITY),
+            );
         });
         ui.horizontal(|ui| {
-            ui.checkbox(&mut layer.visible, "Visible");
-            ui.checkbox(&mut layer.locked, "Locked");
-        });
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Duplicate").clicked() {
-                action = Some(LayerAction::Duplicate);
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let eye = if layer.visible {
+                Icon::Eye
+            } else {
+                Icon::EyeOff
+            };
+            if icons::toggle(ui, eye, "Show / hide", !layer.visible).clicked() {
+                layer.visible = !layer.visible;
             }
-            if ui.button("Delete").clicked() {
-                action = Some(LayerAction::Delete);
+            let lock = if layer.locked {
+                Icon::Lock
+            } else {
+                Icon::Unlock
+            };
+            if icons::toggle(ui, lock, "Lock / unlock", layer.locked).clicked() {
+                layer.locked = !layer.locked;
             }
-            if ui
-                .button("Forward")
-                .on_hover_text("Move up the layer stack")
-                .clicked()
-            {
+            if icons::button(ui, Icon::Up, "Bring forward").clicked() {
                 action = Some(LayerAction::Reorder(1));
             }
-            if ui
-                .button("Backward")
-                .on_hover_text("Move down the layer stack")
-                .clicked()
-            {
+            if icons::button(ui, Icon::Down, "Send backward").clicked() {
                 action = Some(LayerAction::Reorder(-1));
             }
+            if icons::button(ui, Icon::Duplicate, "Duplicate (Ctrl+D)").clicked() {
+                action = Some(LayerAction::Duplicate);
+            }
+            if icons::button(ui, Icon::Trash, "Delete layer").clicked() {
+                action = Some(LayerAction::Delete);
+            }
         });
-        ui.add_space(4.0);
+        ui.add_space(6.0);
 
-        section(ui, "Move & Transform", |ui| {
-            transform_section(ui, layer, frame)
-        });
-        match &mut layer.kind {
-            LayerKind::Shape {
-                shape,
-                size,
-                corner_radius,
-            } => section(ui, "Shape", |ui| {
-                shape_section(ui, shape, size, corner_radius, frame)
-            }),
-            LayerKind::Text { text, font_size } => section(ui, "Text", |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(text)
-                        .desired_rows(3)
-                        .desired_width(f32::INFINITY),
-                );
-                ui.horizontal(|ui| {
-                    ui.label("Font size");
-                    ui.add(
-                        DragValue::new(font_size)
-                            .range(1.0..=1000.0)
-                            .speed(0.5)
-                            .suffix(" px"),
-                    );
-                });
-            }),
-            LayerKind::Image { path, size } => section(ui, "Image", |ui| {
-                ui.label(RichText::new(path.display().to_string()).small().weak());
-                ui.label(format!("{} × {} px", size.x, size.y));
-            }),
+        // Property categories as icon tiles, one page at a time, the way
+        // Alight Motion groups a layer's settings.
+        let is_shape = matches!(layer.kind, LayerKind::Shape { .. });
+        let page_id = egui::Id::new("inspector_page");
+        let mut page = ui
+            .data(|d| d.get_temp::<Page>(page_id))
+            .unwrap_or(Page::Transform);
+        if page == Page::Border && !is_shape {
+            page = Page::Transform;
         }
-        section(ui, "Color & Fill", |ui| {
-            Grid::new("fill_grid").num_columns(3).show(ui, |ui| {
-                let label = if matches!(layer.kind, LayerKind::Image { .. }) {
-                    "Tint"
-                } else {
-                    "Color"
-                };
-                anim_row(ui, label, &mut layer.fill, frame, color_edit);
-            });
+        let (kind_icon, kind_label) = match &layer.kind {
+            LayerKind::Shape { .. } => (theme::layer_icon(&layer.kind), "Shape"),
+            LayerKind::Text { .. } => (Icon::Text, "Text"),
+            LayerKind::Image { .. } => (Icon::Image, "Image"),
+        };
+        let mut pages = vec![
+            (Page::Transform, Icon::Transform, "Move"),
+            (Page::Content, kind_icon, kind_label),
+            (Page::Fill, Icon::Fill, "Color"),
+        ];
+        if is_shape {
+            pages.push((Page::Border, Icon::Border, "Border"));
+        }
+        pages.push((Page::Timing, Icon::Timing, "Timing"));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let n = pages.len() as f32;
+            let width = (ui.available_width() - 6.0 * (n - 1.0)) / n;
+            for (p, icon, label) in &pages {
+                if icons::tile(ui, *icon, label, page == *p, vec2(width, 58.0)).clicked() {
+                    page = *p;
+                }
+            }
         });
-        if matches!(layer.kind, LayerKind::Shape { .. }) {
-            section(ui, "Border", |ui| {
+        ui.data_mut(|d| d.insert_temp(page_id, page));
+        ui.add_space(8.0);
+
+        card(ui, |ui| match page {
+            Page::Transform => transform_section(ui, layer, frame),
+            Page::Content => match &mut layer.kind {
+                LayerKind::Shape {
+                    shape,
+                    size,
+                    corner_radius,
+                } => shape_section(ui, shape, size, corner_radius, frame),
+                LayerKind::Text { text, font_size } => {
+                    ui.add(
+                        egui::TextEdit::multiline(text)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Font size");
+                        ui.add(
+                            DragValue::new(font_size)
+                                .range(1.0..=1000.0)
+                                .speed(0.5)
+                                .suffix(" px"),
+                        );
+                    });
+                }
+                LayerKind::Image { path, size } => {
+                    ui.label(format!("{} × {} px", size.x, size.y));
+                    ui.label(RichText::new(path.display().to_string()).small().weak());
+                }
+            },
+            Page::Fill => {
+                Grid::new("fill_grid").num_columns(3).show(ui, |ui| {
+                    let label = if matches!(layer.kind, LayerKind::Image { .. }) {
+                        "Tint"
+                    } else {
+                        "Color"
+                    };
+                    anim_row(ui, label, &mut layer.fill, frame, color_edit);
+                    anim_row(ui, "Opacity", &mut layer.opacity, frame, opacity_edit);
+                });
+            }
+            Page::Border => {
                 ui.checkbox(&mut layer.border.enabled, "Draw border");
                 ui.add_enabled_ui(layer.border.enabled, |ui| {
                     Grid::new("border_grid").num_columns(3).show(ui, |ui| {
@@ -257,25 +312,25 @@ impl AetherApp {
                         anim_row(ui, "Color", &mut layer.border.color, frame, color_edit);
                     });
                 });
-            });
-        }
-        section(ui, "Timing", |ui| {
-            Grid::new("timing_grid").num_columns(2).show(ui, |ui| {
-                ui.label("In");
-                ui.add(
-                    DragValue::new(&mut layer.in_frame)
-                        .range(-duration..=layer.out_frame - 1)
-                        .suffix(" f"),
-                );
-                ui.end_row();
-                ui.label("Out");
-                ui.add(
-                    DragValue::new(&mut layer.out_frame)
-                        .range(layer.in_frame + 1..=duration * 4)
-                        .suffix(" f"),
-                );
-                ui.end_row();
-            });
+            }
+            Page::Timing => {
+                Grid::new("timing_grid").num_columns(2).show(ui, |ui| {
+                    ui.label("Starts at");
+                    ui.add(
+                        DragValue::new(&mut layer.in_frame)
+                            .range(-duration..=layer.out_frame - 1)
+                            .suffix(" f"),
+                    );
+                    ui.end_row();
+                    ui.label("Ends at");
+                    ui.add(
+                        DragValue::new(&mut layer.out_frame)
+                            .range(layer.in_frame + 1..=duration * 4)
+                            .suffix(" f"),
+                    );
+                    ui.end_row();
+                });
+            }
         });
 
         match action {
@@ -290,16 +345,31 @@ impl AetherApp {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    Transform,
+    Content,
+    Fill,
+    Border,
+    Timing,
+}
+
 enum LayerAction {
     Duplicate,
     Delete,
     Reorder(isize),
 }
 
-fn section(ui: &mut Ui, title: &str, add_contents: impl FnOnce(&mut Ui)) {
-    CollapsingHeader::new(RichText::new(title).strong())
-        .default_open(true)
-        .show(ui, add_contents);
+/// A rounded surface that groups a page of settings.
+fn card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
+    egui::Frame::NONE
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add_contents(ui);
+        });
 }
 
 fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
@@ -316,14 +386,6 @@ fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
         });
         anim_row(ui, "Rotation", &mut t.rotation, frame, |ui, v| {
             ui.add(DragValue::new(v).speed(0.5).suffix("°")).changed()
-        });
-        anim_row(ui, "Opacity", &mut layer.opacity, frame, |ui, v| {
-            let mut percent = *v * 100.0;
-            let changed = ui
-                .add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%"))
-                .changed();
-            *v = percent / 100.0;
-            changed
         });
 
         ui.label("");
@@ -455,6 +517,15 @@ fn vec2_edit(ui: &mut Ui, v: &mut Vec2, speed: f32, suffix: &str) -> bool {
             .max_decimals(1),
     );
     x.changed() || y.changed()
+}
+
+fn opacity_edit(ui: &mut Ui, v: &mut f32) -> bool {
+    let mut percent = *v * 100.0;
+    let changed = ui
+        .add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%"))
+        .changed();
+    *v = percent / 100.0;
+    changed
 }
 
 fn color_edit(ui: &mut Ui, color: &mut Color) -> bool {

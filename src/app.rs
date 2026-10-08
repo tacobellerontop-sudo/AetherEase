@@ -551,19 +551,22 @@ impl eframe::App for AetherApp {
 impl AetherApp {
     fn editor_ui(&mut self, ui: &mut egui::Ui, ctx: &Context) {
         let ctx = ctx.clone();
-        egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar_ui(ui));
-        egui::Panel::top("toolbar")
-            .frame(theme::toolbar_frame(&ctx))
-            .show(ui, |ui| self.toolbar_ui(ui));
+        egui::Panel::top("top_bar")
+            .frame(theme::top_bar_frame(&ctx))
+            .exact_size(48.0)
+            .show_separator_line(false)
+            .show(ui, |ui| self.top_bar_ui(ui));
         egui::Panel::bottom("timeline")
             .resizable(true)
-            .default_size(300.0)
+            .show_separator_line(false)
+            .default_size(320.0)
             .size_range(160.0..=800.0)
             .frame(theme::panel_frame(&ctx))
             .show(ui, |ui| self.timeline_ui(ui));
         egui::Panel::right("inspector")
             .resizable(true)
-            .default_size(320.0)
+            .show_separator_line(false)
+            .default_size(330.0)
             .size_range(260.0..=520.0)
             .frame(theme::panel_frame(&ctx))
             .show(ui, |ui| self.inspector_ui(ui));
