@@ -6,8 +6,21 @@ grow into a real alternative to After Effects.
 
 ![AetherEase editor](docs/screenshot.png)
 
+| Home | New project |
+|---|---|
+| ![Home screen](docs/home.png) | ![New project dialog](docs/new-project.png) |
+
 ## What works today
 
+- **Home screen**: one button to create a project and a grid of recent
+  projects with live thumbnails. Right-click a project to remove it from the
+  list.
+- **New project dialog** like Alight Motion's: name, resolution (480p to 4K),
+  aspect ratio (16:9, 9:16, 1:1, 4:3, 3:4, 4:5, 21:9), frame rate and
+  background colour.
+- **Autosave**: new projects are saved to your projects folder
+  (`%APPDATA%\AetherEase\projects` on Windows) and every change is saved
+  automatically a moment after you make it.
 - **Editor layout** modelled on Alight Motion: canvas preview in the middle,
   property inspector on the right, timeline along the bottom.
 - **Layers**: rectangles (with rounded corners), ellipses, triangles,
@@ -51,7 +64,7 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | Delete | Delete the selected keyframe, or the selected layer |
 | Ctrl+D | Duplicate layer |
 | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z | Undo, redo |
-| Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S | New, open, save, save as |
+| Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S | New project, open, save, save as |
 | Esc | Deselect |
 
 ## Code layout
@@ -62,8 +75,9 @@ through wgpu. CI builds a Windows release binary for every pull request.
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
 | `src/render.rs` | Draws layers, transforms, hit testing, image textures |
 | `src/history.rs` | Snapshot-based undo/redo |
-| `src/app.rs` | Editor state, file handling, shortcuts, playback |
-| `src/ui/` | Menu and toolbar, canvas viewport, inspector, timeline |
+| `src/app.rs` | Screens, editor state, file handling, autosave, shortcuts, playback |
+| `src/recent.rs` | Recent projects list and the projects folder |
+| `src/ui/` | Home screen and new project dialog, menu and toolbar, canvas viewport, inspector, timeline |
 
 The UI is built with [egui](https://github.com/emilk/egui)/eframe. The preview
 is drawn with egui's painter for now; a dedicated renderer (for export,

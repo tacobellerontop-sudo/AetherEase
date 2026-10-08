@@ -10,7 +10,11 @@ impl AetherApp {
     pub fn menu_bar_ui(&mut self, ui: &mut Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("New project").clicked() {
+                if ui.button("Home").clicked() {
+                    self.go_home();
+                }
+                ui.separator();
+                if ui.button("New project…").clicked() {
                     self.new_project();
                 }
                 if ui.button("Open…").clicked() {
@@ -108,12 +112,13 @@ impl AetherApp {
 
     pub fn toolbar_ui(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("AetherEase")
-                    .strong()
-                    .size(16.0)
-                    .color(theme::ACCENT),
-            );
+            if ui
+                .button(RichText::new("⏴ Home").strong().color(theme::ACCENT))
+                .on_hover_text("Back to your projects")
+                .clicked()
+            {
+                self.go_home();
+            }
             ui.separator();
             ui.label("Add");
             for (name, shape) in ShapeKind::PRESETS {

@@ -6,6 +6,7 @@
 mod app;
 mod history;
 mod model;
+mod recent;
 mod render;
 mod ui;
 

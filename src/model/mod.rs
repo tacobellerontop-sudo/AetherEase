@@ -460,6 +460,76 @@ impl Project {
     }
 }
 
+/// Choices offered when creating a project, in the style of Alight Motion:
+/// the short side's resolution plus an aspect ratio, rather than raw pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectSettings {
+    pub name: String,
+    /// Pixels on the shorter side (1080 for "1080p").
+    pub resolution: u32,
+    /// Aspect ratio as width:height.
+    pub aspect: (u32, u32),
+    pub fps: u32,
+    pub background: Color,
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        Self {
+            name: "Untitled project".into(),
+            resolution: 1080,
+            aspect: (16, 9),
+            fps: 30,
+            background: Color::BLACK,
+        }
+    }
+}
+
+impl ProjectSettings {
+    pub const RESOLUTIONS: [(&'static str, u32); 6] = [
+        ("480p", 480),
+        ("540p", 540),
+        ("720p", 720),
+        ("1080p", 1080),
+        ("1440p", 1440),
+        ("4K", 2160),
+    ];
+    pub const ASPECTS: [(u32, u32); 7] =
+        [(16, 9), (9, 16), (1, 1), (4, 3), (3, 4), (4, 5), (21, 9)];
+    pub const FRAME_RATES: [u32; 8] = [12, 15, 24, 25, 30, 48, 50, 60];
+
+    /// Canvas size in pixels; both sides are rounded to even numbers, which
+    /// video encoders require.
+    pub fn size(&self) -> (u32, u32) {
+        let (aw, ah) = (self.aspect.0.max(1) as f32, self.aspect.1.max(1) as f32);
+        let short = self.resolution as f32;
+        let even = |v: f32| ((v / 2.0).round() * 2.0).max(2.0) as u32;
+        if aw >= ah {
+            (even(short * aw / ah), even(short))
+        } else {
+            (even(short), even(short * ah / aw))
+        }
+    }
+
+    pub fn build(&self) -> Project {
+        let (width, height) = self.size();
+        let name = self.name.trim();
+        Project {
+            name: if name.is_empty() {
+                "Untitled project".into()
+            } else {
+                name.to_owned()
+            },
+            width,
+            height,
+            fps: self.fps,
+            duration: self.fps as i32 * 10,
+            background: self.background,
+            ..Project::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,6 +574,28 @@ mod tests {
         layer.shift_in_time(10);
         assert_eq!(layer.in_frame, 10);
         assert_eq!(layer.all_key_frames(), vec![15, 30]);
+    }
+
+    #[test]
+    fn project_settings_sizes() {
+        let mut settings = ProjectSettings::default();
+        assert_eq!(settings.size(), (1920, 1080));
+        settings.aspect = (9, 16);
+        assert_eq!(settings.size(), (1080, 1920));
+        settings.aspect = (1, 1);
+        settings.resolution = 720;
+        assert_eq!(settings.size(), (720, 720));
+        settings.aspect = (21, 9);
+        settings.resolution = 1080;
+        assert_eq!(settings.size(), (2520, 1080));
+        settings.aspect = (4, 5);
+        assert_eq!(settings.size(), (1080, 1350));
+
+        settings.name = "  ".into();
+        settings.fps = 24;
+        let project = settings.build();
+        assert_eq!(project.name, "Untitled project");
+        assert_eq!(project.duration, 240);
     }
 
     #[test]

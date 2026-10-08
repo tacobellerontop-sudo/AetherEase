@@ -5,12 +5,29 @@ use std::path::{Path, PathBuf};
 use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 
 use crate::history::History;
-use crate::model::{Project, PropId, ShapeKind};
+use crate::model::{Project, ProjectSettings, PropId, ShapeKind};
+use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::render::{self, TextureCache};
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
 
 pub const PROJECT_EXTENSION: &str = "aether";
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+
+/// Seconds of inactivity after an edit before the project is saved.
+const AUTOSAVE_DELAY: f64 = 1.5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    Home,
+    Editor,
+}
+
+/// A recent project as shown on the home screen; `project` is `None` when the
+/// file can't be read.
+pub struct HomeItem {
+    pub entry: RecentEntry,
+    pub project: Option<Project>,
+}
 
 /// A keyframe picked in the timeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +38,12 @@ pub struct KeySelection {
 }
 
 pub struct AetherApp {
+    pub screen: Screen,
+    /// The "new project" dialog, while it is open.
+    pub new_project_form: Option<ProjectSettings>,
+    pub recent: RecentProjects,
+    pub home_items: Vec<HomeItem>,
+
     pub project: Project,
     pub history: History,
     /// The project as last saved or opened, to tell whether there are unsaved changes.
@@ -43,6 +66,8 @@ pub struct AetherApp {
     /// Last error or notice, shown in the toolbar.
     pub status: Option<String>,
     window_title: String,
+    /// When the project first differed from its saved copy, for autosave.
+    dirty_since: Option<f64>,
 }
 
 impl AetherApp {
@@ -50,6 +75,10 @@ impl AetherApp {
         theme::apply(&cc.egui_ctx);
         let project = Project::default();
         let mut app = Self {
+            screen: Screen::Home,
+            new_project_form: None,
+            recent: RecentProjects::load(),
+            home_items: Vec::new(),
             history: History::new(&project),
             saved: project.clone(),
             project,
@@ -65,7 +94,9 @@ impl AetherApp {
             timeline: TimelineState::default(),
             status: None,
             window_title: String::new(),
+            dirty_since: None,
         };
+        app.refresh_home();
         if let Some(path) = path {
             app.open_path(&path);
         }
@@ -164,7 +195,7 @@ impl AetherApp {
         self.set_frame(self.frame);
     }
 
-    // ---- Files ----------------------------------------------------------
+    // ---- Screens and files ----------------------------------------------
 
     /// Asks before throwing away unsaved work. Returns whether to go ahead.
     fn confirm_discard(&self) -> bool {
@@ -177,6 +208,18 @@ impl AetherApp {
                 == rfd::MessageDialogResult::Yes
     }
 
+    /// Gets ready to close the open project: saves it if it has a file,
+    /// otherwise asks before discarding changes. Returns whether to go ahead.
+    fn leave_current(&mut self) -> bool {
+        if self.screen != Screen::Editor || !self.is_dirty() {
+            return true;
+        }
+        if let Some(path) = self.path.clone() {
+            self.save_to(&path);
+        }
+        self.confirm_discard()
+    }
+
     fn replace_project(&mut self, project: Project, path: Option<PathBuf>) {
         self.history = History::new(&project);
         self.saved = project.clone();
@@ -186,19 +229,87 @@ impl AetherApp {
         self.selected_key = None;
         self.frame = 0;
         self.playing = false;
+        self.dirty_since = None;
         self.textures.clear();
         self.viewport = ViewportState::default();
         self.timeline = TimelineState::default();
     }
 
+    /// Opens the "new project" dialog.
     pub fn new_project(&mut self) {
-        if self.confirm_discard() {
-            self.replace_project(Project::default(), None);
+        self.new_project_form = Some(ProjectSettings::default());
+    }
+
+    /// Creates a project from the dialog's settings, saves it to the projects
+    /// folder and opens it in the editor.
+    pub fn create_project(&mut self, settings: &ProjectSettings) {
+        if !self.leave_current() {
+            return;
+        }
+        let project = settings.build();
+        let path = recent::projects_dir().and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            Some(recent::unique_project_path(
+                &dir,
+                &project.name,
+                PROJECT_EXTENSION,
+            ))
+        });
+        self.replace_project(project, None);
+        match path {
+            Some(path) => self.save_to(&path),
+            None => {
+                self.status = Some(
+                    "Couldn't create the projects folder; use Save as to keep this project.".into(),
+                )
+            }
+        }
+        self.screen = Screen::Editor;
+    }
+
+    pub fn go_home(&mut self) {
+        if self.leave_current() {
+            self.screen = Screen::Home;
+            self.playing = false;
+            self.refresh_home();
         }
     }
 
+    /// Reloads the recent list and the projects it points to. Files that no
+    /// longer exist are dropped from the list.
+    pub fn refresh_home(&mut self) {
+        let before = self.recent.entries.len();
+        self.recent.entries.retain(|e| e.path.is_file());
+        if self.recent.entries.len() != before {
+            self.recent.save();
+        }
+        self.home_items = self
+            .recent
+            .entries
+            .iter()
+            .map(|entry| HomeItem {
+                entry: entry.clone(),
+                project: std::fs::read_to_string(&entry.path)
+                    .ok()
+                    .and_then(|json| Project::from_json(&json).ok()),
+            })
+            .collect();
+    }
+
+    pub fn forget_recent(&mut self, path: &Path) {
+        self.recent.remove(path);
+        self.recent.save();
+        self.refresh_home();
+    }
+
+    fn remember_recent(&mut self, path: &Path) {
+        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        self.recent.touch(&path, recent::now_secs());
+        self.recent.save();
+    }
+
     pub fn open_dialog(&mut self) {
-        if !self.confirm_discard() {
+        if !self.leave_current() {
             return;
         }
         if let Some(path) = rfd::FileDialog::new()
@@ -216,7 +327,9 @@ impl AetherApp {
         match result {
             Ok(project) => {
                 self.replace_project(project, Some(path.to_owned()));
+                self.remember_recent(path);
                 self.status = None;
+                self.screen = Screen::Editor;
             }
             Err(err) => self.status = Some(format!("Couldn't open {}: {err}", path.display())),
         }
@@ -253,7 +366,9 @@ impl AetherApp {
             Ok(()) => {
                 self.saved = self.project.clone();
                 self.path = Some(path.to_owned());
+                self.dirty_since = None;
                 self.status = None;
+                self.remember_recent(path);
             }
             Err(err) => self.status = Some(format!("Couldn't save {}: {err}", path.display())),
         }
@@ -266,17 +381,22 @@ impl AetherApp {
         let ctrl_shift = |key| KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key);
         let shortcut = |s: KeyboardShortcut| ctx.input_mut(|i| i.consume_shortcut(&s));
 
-        if shortcut(ctrl_shift(Key::S)) {
-            self.save_as();
-        }
-        if shortcut(ctrl(Key::S)) {
-            self.save();
+        if self.screen == Screen::Editor {
+            if shortcut(ctrl_shift(Key::S)) {
+                self.save_as();
+            }
+            if shortcut(ctrl(Key::S)) {
+                self.save();
+            }
         }
         if shortcut(ctrl(Key::O)) {
             self.open_dialog();
         }
         if shortcut(ctrl(Key::N)) {
             self.new_project();
+        }
+        if self.screen != Screen::Editor || self.new_project_form.is_some() {
+            return;
         }
 
         // Single-key shortcuts must not steal keystrokes from text fields.
@@ -353,13 +473,46 @@ impl AetherApp {
         }
     }
 
+    /// Saves the project shortly after the last edit, once no drag or text
+    /// entry is in progress, like Alight Motion does. Projects without a file
+    /// (only possible if the projects folder couldn't be created) are skipped.
+    fn autosave(&mut self, ctx: &Context) {
+        if !self.is_dirty() {
+            self.dirty_since = None;
+            return;
+        }
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        let since = *self.dirty_since.get_or_insert(now);
+        let busy = ctx.input(|i| i.pointer.any_down()) || ctx.egui_wants_keyboard_input();
+        if now - since >= AUTOSAVE_DELAY && !busy {
+            self.save_to(&path);
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(AUTOSAVE_DELAY / 2.0));
+        }
+    }
+
     fn handle_close(&mut self, ctx: &Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.confirm_discard() {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.leave_current() {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
         }
     }
 
     fn update_title(&mut self, ctx: &Context) {
+        let title = if self.screen == Screen::Home {
+            "AetherEase".to_owned()
+        } else {
+            self.editor_title()
+        };
+        if title != self.window_title {
+            ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
+    fn editor_title(&self) -> String {
         let name = self
             .path
             .as_ref()
@@ -367,11 +520,7 @@ impl AetherApp {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.project.name.clone());
         let dirty = if self.is_dirty() { "*" } else { "" };
-        let title = format!("{name}{dirty} - AetherEase");
-        if title != self.window_title {
-            ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
-            self.window_title = title;
-        }
+        format!("{name}{dirty} - AetherEase")
     }
 }
 
@@ -380,8 +529,28 @@ impl eframe::App for AetherApp {
         let ctx = ui.ctx().clone();
         self.handle_close(&ctx);
         self.handle_shortcuts(&ctx);
-        self.advance_playback(&ctx);
 
+        match self.screen {
+            Screen::Home => {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE.fill(ctx.global_style().visuals.extreme_bg_color))
+                    .show(ui, |ui| self.home_ui(ui));
+            }
+            Screen::Editor => {
+                self.advance_playback(&ctx);
+                self.editor_ui(ui, &ctx);
+                self.commit_history(&ctx);
+                self.autosave(&ctx);
+            }
+        }
+        self.new_project_dialog(&ctx);
+        self.update_title(&ctx);
+    }
+}
+
+impl AetherApp {
+    fn editor_ui(&mut self, ui: &mut egui::Ui, ctx: &Context) {
+        let ctx = ctx.clone();
         egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar_ui(ui));
         egui::Panel::top("toolbar")
             .frame(theme::toolbar_frame(&ctx))
@@ -401,8 +570,5 @@ impl eframe::App for AetherApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport_ui(ui));
-
-        self.commit_history(&ctx);
-        self.update_title(&ctx);
     }
 }
