@@ -28,8 +28,6 @@ pub enum Icon {
     Lock,
     Unlock,
     More,
-    Expand,
-    Collapse,
     Trash,
     Duplicate,
     Up,
@@ -83,8 +81,6 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[p(0.0, -0.6), p(0.0, 0.6)]);
         }
         Icon::Back => line(&[p(0.25, -0.55), p(-0.3, 0.0), p(0.25, 0.55)]),
-        Icon::Expand => line(&[p(-0.4, -0.2), p(0.0, 0.2), p(0.4, -0.2)]),
-        Icon::Collapse => line(&[p(-0.2, -0.4), p(0.2, 0.0), p(-0.2, 0.4)]),
         Icon::Up => line(&[p(-0.45, 0.2), p(0.0, -0.25), p(0.45, 0.2)]),
         Icon::Down => line(&[p(-0.45, -0.2), p(0.0, 0.25), p(0.45, -0.2)]),
         Icon::Undo | Icon::Redo => {

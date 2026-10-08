@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 
 use crate::history::History;
-use crate::model::{Project, ProjectSettings, PropId, ShapeKind};
+use crate::model::{Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::render::{self, TextureCache};
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
@@ -33,7 +33,6 @@ pub struct HomeItem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeySelection {
     pub layer: u64,
-    pub prop: PropId,
     pub frame: i32,
 }
 
@@ -154,12 +153,8 @@ impl AetherApp {
 
     pub fn delete_selection(&mut self) {
         if let Some(key) = self.selected_key.take() {
-            if let Some(track) = self
-                .project
-                .layer_mut(key.layer)
-                .and_then(|l| l.track_mut(key.prop))
-            {
-                track.remove_key(key.frame);
+            if let Some(layer) = self.project.layer_mut(key.layer) {
+                layer.remove_keys_at(key.frame);
             }
         } else if let Some(id) = self.selected.take() {
             self.project.remove_layer(id);

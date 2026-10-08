@@ -8,7 +8,7 @@ use crate::model::anim::Lerp;
 use crate::model::{Animated, Color, Easing, KeyTrack, Layer, LayerKind, ShapeKind};
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
-use crate::ui::timeline::diamond;
+use crate::ui::timeline::{diamond, timecode};
 
 const RESOLUTIONS: [(&str, u32, u32); 6] = [
     ("1080p landscape (16:9)", 1920, 1080),
@@ -132,38 +132,6 @@ impl AetherApp {
         let frame = self.frame;
         let duration = self.project.duration;
         let mut action = None;
-
-        if let Some(key) = self.selected_key
-            && let Some(track) = self
-                .project
-                .layer_mut(key.layer)
-                .and_then(|l| l.track_mut(key.prop))
-            && let Some(mut easing) = track.easing(key.frame)
-        {
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                diamond(
-                    ui.painter(),
-                    rect.center(),
-                    5.0,
-                    theme::KEYFRAME,
-                    Stroke::NONE,
-                );
-                ui.label(format!("{} key at frame {}", key.prop.label(), key.frame));
-            });
-            ui.horizontal(|ui| {
-                ui.label("Easing");
-                egui::ComboBox::from_id_salt("key_easing")
-                    .selected_text(easing.label())
-                    .show_ui(ui, |ui| {
-                        for e in Easing::ALL {
-                            ui.selectable_value(&mut easing, e, e.label());
-                        }
-                    });
-            });
-            track.set_easing(key.frame, easing);
-            ui.separator();
-        }
 
         let Some(layer) = self.project.layer_mut(id) else {
             return;
@@ -333,7 +301,43 @@ impl AetherApp {
             }
         });
 
+        // The selected keyframe (picked on the layer's timeline bar).
+        let fps = self.project.fps;
+        if let Some(key) = self.selected_key.filter(|k| k.layer == id)
+            && let Some(layer) = self.project.layer_mut(id)
+            && let Some(mut easing) = layer.easing_at(key.frame)
+        {
+            ui.add_space(8.0);
+            card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                    diamond(
+                        ui.painter(),
+                        rect.center(),
+                        6.0,
+                        theme::KEYFRAME,
+                        Stroke::NONE,
+                    );
+                    ui.label(RichText::new("Keyframe").strong());
+                    ui.label(RichText::new(timecode(key.frame, fps)).monospace().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if icons::button(ui, Icon::Trash, "Delete keyframe").clicked() {
+                            action = Some(LayerAction::DeleteKey);
+                        }
+                    });
+                });
+                ui.label(RichText::new("Easing to the next keyframe").weak());
+                ui.horizontal_wrapped(|ui| {
+                    for e in Easing::ALL {
+                        ui.selectable_value(&mut easing, e, e.label());
+                    }
+                });
+            });
+            layer.set_easing_at(key.frame, easing);
+        }
+
         match action {
+            Some(LayerAction::DeleteKey) => self.delete_selection(),
             Some(LayerAction::Duplicate) => self.duplicate_selected(),
             Some(LayerAction::Delete) => {
                 self.selected_key = None;
@@ -355,6 +359,7 @@ enum Page {
 }
 
 enum LayerAction {
+    DeleteKey,
     Duplicate,
     Delete,
     Reorder(isize),

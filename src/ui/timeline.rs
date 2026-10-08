@@ -1,27 +1,24 @@
 //! The timeline: transport controls, a time ruler, one row per layer with a
 //! draggable/trimmable bar, and expandable property rows showing keyframes.
 
-use std::collections::HashSet;
-
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontId, Id, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2, vec2,
 };
 
 use crate::app::{AetherApp, KeySelection};
-use crate::model::{Easing, PropId};
+use crate::model::Easing;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
 const LABEL_WIDTH: f32 = 230.0;
 const RULER_HEIGHT: f32 = 24.0;
 const LAYER_ROW: f32 = 36.0;
-const PROP_ROW: f32 = 24.0;
 const EDGE_GRAB: f32 = 6.0;
+const TRACK_PAD: f32 = 10.0;
 
 #[derive(Default)]
 pub struct TimelineState {
-    pub expanded: HashSet<u64>,
     /// Points per frame; `None` fits the whole composition in view.
     pub zoom: Option<f32>,
     /// First visible frame (fractional) when zoomed in.
@@ -45,17 +42,11 @@ enum TimelineDrag {
     TrimOut {
         id: u64,
     },
+    /// All of a layer's keys at one frame, moved together.
     Key {
         layer: u64,
-        prop: PropId,
         frame: i32,
     },
-}
-
-#[derive(Clone, Copy)]
-enum Row {
-    Layer(u64),
-    Prop(u64, PropId),
 }
 
 /// Frame <-> x conversion for the track area.
@@ -93,7 +84,9 @@ impl AetherApp {
         ui.add_space(2.0);
 
         let full = ui.available_rect_before_wrap();
-        let x0 = full.left() + LABEL_WIDTH;
+        // Frame 0 sits a little right of the label column so its keyframes
+        // aren't cut in half.
+        let x0 = full.left() + LABEL_WIDTH + TRACK_PAD;
         let track_width = (full.right() - x0 - 12.0).max(40.0);
         let duration = self.project.duration.max(1) as f32;
         let fit = track_width / duration;
@@ -287,25 +280,18 @@ impl AetherApp {
                 }
                 ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
             }
-            TimelineDrag::Key {
-                layer,
-                prop,
-                frame: from,
-            } => {
+            TimelineDrag::Key { layer, frame: from } => {
                 let frame = frame.max(0);
-                if let Some(track) = self
-                    .project
-                    .layer_mut(layer)
-                    .and_then(|l| l.track_mut(prop))
-                    && frame != from
-                    && !track.has_key(frame)
+                if frame != from
+                    && let Some(l) = self.project.layer_mut(layer)
+                    && l.move_keys_at(from, frame)
                 {
-                    // Keys never land on an occupied frame, so dragging past
-                    // another key can't swallow it.
-                    track.move_key(from, frame);
-                    self.timeline.drag = Some(TimelineDrag::Key { layer, prop, frame });
-                    self.selected_key = Some(KeySelection { layer, prop, frame });
+                    self.timeline.drag = Some(TimelineDrag::Key { layer, frame });
+                    self.selected_key = Some(KeySelection { layer, frame });
+                    // Keep the preview on the key being moved.
+                    self.set_frame(frame);
                 }
+                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
             }
         }
     }
@@ -318,7 +304,7 @@ impl AetherApp {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
 
-        let track = Rect::from_x_y_ranges(scale.x0..=rect.right(), rect.y_range());
+        let track = Rect::from_x_y_ranges(scale.x0 - TRACK_PAD..=rect.right(), rect.y_range());
         let fps = self.project.fps.max(1) as i32;
         // Pick a tick step that keeps labels at least ~70pt apart.
         let steps = [
@@ -380,7 +366,7 @@ impl AetherApp {
         }
 
         // Keep the label column plain; the transport bar shows the time.
-        let label_rect = Rect::from_x_y_ranges(rect.left()..=scale.x0, rect.y_range());
+        let label_rect = Rect::from_x_y_ranges(rect.left()..=scale.x0 - TRACK_PAD, rect.y_range());
         painter.rect_filled(label_rect, 0.0, ui.visuals().panel_fill);
 
         // Playhead handle.
@@ -405,7 +391,7 @@ impl AetherApp {
         if (response.is_pointer_button_down_on() || response.clicked())
             && self.timeline.drag.is_none()
             && let Some(p) = response.interact_pointer_pos()
-            && p.x >= scale.x0
+            && p.x >= scale.x0 - TRACK_PAD
         {
             self.set_frame(scale.frame_at(p.x).round() as i32);
             self.timeline.drag = Some(TimelineDrag::Scrub);
@@ -413,26 +399,8 @@ impl AetherApp {
     }
 
     fn rows_ui(&mut self, ui: &mut Ui, scale: TimeScale) {
-        let rows: Vec<Row> = self
-            .project
-            .layers
-            .iter()
-            .rev()
-            .flat_map(|layer| {
-                let mut rows = vec![Row::Layer(layer.id)];
-                if self.timeline.expanded.contains(&layer.id) {
-                    rows.extend(layer.props().into_iter().map(|p| Row::Prop(layer.id, p)));
-                }
-                rows
-            })
-            .collect();
-        let content_height: f32 = rows
-            .iter()
-            .map(|r| match r {
-                Row::Layer(_) => LAYER_ROW,
-                Row::Prop(..) => PROP_ROW,
-            })
-            .sum();
+        let rows: Vec<u64> = self.project.layers.iter().rev().map(|l| l.id).collect();
+        let content_height = rows.len() as f32 * LAYER_ROW;
 
         let size = vec2(
             ui.available_width(),
@@ -443,21 +411,24 @@ impl AetherApp {
             self.select(None);
         }
         let painter = ui.painter_at(rect);
-        let track_clip = Rect::from_x_y_ranges(scale.x0..=rect.right(), rect.y_range())
+        let track_clip = Rect::from_x_y_ranges(scale.x0 - TRACK_PAD..=rect.right(), rect.y_range())
             .intersect(painter.clip_rect());
         let track_painter = painter.with_clip_rect(track_clip);
 
         // Shade time past the end of the composition.
         let end_x = scale.x(self.project.duration as f32);
         if end_x < rect.right() {
-            let past = Rect::from_x_y_ranges(end_x.max(scale.x0)..=rect.right(), rect.y_range());
+            let past = Rect::from_x_y_ranges(
+                end_x.max(scale.x0 - TRACK_PAD)..=rect.right(),
+                rect.y_range(),
+            );
             track_painter.rect_filled(past, 0.0, Color32::from_black_alpha(90));
         }
         // Label column divider.
         painter.line_segment(
             [
-                Pos2::new(scale.x0, rect.top()),
-                Pos2::new(scale.x0, rect.bottom()),
+                Pos2::new(scale.x0 - TRACK_PAD, rect.top()),
+                Pos2::new(scale.x0 - TRACK_PAD, rect.bottom()),
             ],
             Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
         );
@@ -473,36 +444,18 @@ impl AetherApp {
         }
 
         let mut y = rect.top();
-        for row in &rows {
-            match *row {
-                Row::Layer(id) => {
-                    let row_rect = Rect::from_x_y_ranges(rect.x_range(), y..=y + LAYER_ROW);
-                    self.layer_row(
-                        ui,
-                        &painter,
-                        &track_painter,
-                        track_clip,
-                        row_rect,
-                        scale,
-                        id,
-                    );
-                    y += LAYER_ROW;
-                }
-                Row::Prop(id, prop) => {
-                    let row_rect = Rect::from_x_y_ranges(rect.x_range(), y..=y + PROP_ROW);
-                    self.prop_row(
-                        ui,
-                        &painter,
-                        &track_painter,
-                        track_clip,
-                        row_rect,
-                        scale,
-                        id,
-                        prop,
-                    );
-                    y += PROP_ROW;
-                }
-            }
+        for &id in &rows {
+            let row_rect = Rect::from_x_y_ranges(rect.x_range(), y..=y + LAYER_ROW);
+            self.layer_row(
+                ui,
+                &painter,
+                &track_painter,
+                track_clip,
+                row_rect,
+                scale,
+                id,
+            );
+            y += LAYER_ROW;
         }
 
         // Playhead across all rows.
@@ -530,11 +483,7 @@ impl AetherApp {
             return;
         };
         let selected = self.selected == Some(id);
-        let (visible, locked, expanded) = (
-            layer.visible,
-            layer.locked,
-            self.timeline.expanded.contains(&id),
-        );
+        let (visible, locked) = (layer.visible, layer.locked);
         let color = theme::layer_color(&layer.kind);
         let name = layer.name.clone();
         let icon = theme::layer_icon(&layer.kind);
@@ -543,7 +492,7 @@ impl AetherApp {
         let key_frames = layer.all_key_frames();
 
         let label_area = Rect::from_x_y_ranges(
-            row.left() + 2.0..=scale.x0 - 4.0,
+            row.left() + 2.0..=scale.x0 - TRACK_PAD - 4.0,
             row.top() + 2.0..=row.bottom() - 2.0,
         );
         if selected {
@@ -591,18 +540,6 @@ impl AetherApp {
                 }
                 response.on_hover_cursor(CursorIcon::PointingHand)
             };
-        let expand_icon = if expanded {
-            Icon::Expand
-        } else {
-            Icon::Collapse
-        };
-        if small_button(ui, expand_icon, "expand", true, true)
-            .on_hover_text("Show keyframed properties")
-            .clicked()
-            && !self.timeline.expanded.remove(&id)
-        {
-            self.timeline.expanded.insert(id);
-        }
         let eye = if visible { Icon::Eye } else { Icon::EyeOff };
         let toggle_visible = small_button(ui, eye, "visible", visible, false)
             .on_hover_text("Show / hide")
@@ -620,9 +557,12 @@ impl AetherApp {
             color.gamma_multiply(if visible { 0.9 } else { 0.35 }),
         );
         icons::paint(painter, chip.shrink(5.0), icon, Color32::WHITE);
-        let name_rect = Rect::from_x_y_ranges(chip.right() + 8.0..=scale.x0 - 8.0, row.y_range());
+        let name_rect = Rect::from_x_y_ranges(
+            chip.right() + 8.0..=scale.x0 - TRACK_PAD - 8.0,
+            row.y_range(),
+        );
         let name_response = ui.interact(
-            Rect::from_x_y_ranges(chip.left()..=scale.x0 - 4.0, row.y_range()),
+            Rect::from_x_y_ranges(chip.left()..=scale.x0 - TRACK_PAD - 4.0, row.y_range()),
             Id::new(("name", id)),
             Sense::click(),
         );
@@ -665,15 +605,6 @@ impl AetherApp {
                 FontId::proportional(12.0),
                 Color32::WHITE,
             );
-        for frame in &key_frames {
-            diamond(
-                track_painter,
-                Pos2::new(scale.x(*frame as f32), bar.center().y),
-                3.5,
-                Color32::WHITE,
-                Stroke::NONE,
-            );
-        }
 
         let clipped_bar = bar.intersect(track_clip);
         if clipped_bar.is_positive() && !locked {
@@ -725,136 +656,53 @@ impl AetherApp {
             }
         }
 
-        if let Some(layer) = self.project.layer_mut(id) {
-            if toggle_visible {
-                layer.visible = !layer.visible;
-            }
-            if toggle_lock {
-                layer.locked = !layer.locked;
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn prop_row(
-        &mut self,
-        ui: &mut Ui,
-        painter: &egui::Painter,
-        track_painter: &egui::Painter,
-        track_clip: Rect,
-        row: Rect,
-        scale: TimeScale,
-        id: u64,
-        prop: PropId,
-    ) {
-        let frame = self.frame;
-        let Some(track) = self.project.layer(id).and_then(|l| l.track(prop)) else {
-            return;
-        };
-        let keys = track.key_frames();
-        let has_key_here = track.has_key(frame);
-        let easings: Vec<Easing> = keys
-            .iter()
-            .map(|k| track.easing(*k).unwrap_or_default())
-            .collect();
-
-        painter.rect_filled(row, 0.0, Color32::from_black_alpha(40));
-
-        // Label column: keyframe toggle and name.
-        let toggle_rect = Rect::from_center_size(
-            Pos2::new(row.left() + 40.0, row.center().y),
-            Vec2::splat(16.0),
-        );
-        let toggle = ui.interact(toggle_rect, Id::new(("prop_key", id, prop)), Sense::click());
-        let (fill, stroke) = if has_key_here {
-            (theme::KEYFRAME, Stroke::NONE)
-        } else {
-            (
-                Color32::TRANSPARENT,
-                Stroke::new(
-                    1.0,
-                    if keys.is_empty() {
-                        ui.visuals().weak_text_color()
-                    } else {
-                        theme::KEYFRAME
-                    },
-                ),
-            )
-        };
-        diamond(painter, toggle_rect.center(), 5.0, fill, stroke);
-        let toggle_clicked = toggle
-            .on_hover_text("Add / remove a keyframe at the playhead")
-            .clicked();
-        let label_color = if keys.is_empty() {
-            ui.visuals().weak_text_color()
-        } else {
-            ui.visuals().text_color()
-        };
-        painter.text(
-            Pos2::new(row.left() + 54.0, row.center().y),
-            Align2::LEFT_CENTER,
-            prop.label(),
-            FontId::proportional(12.0),
-            label_color,
-        );
-
-        // Segments between keys, then the keys themselves.
-        for (pair, easing) in keys.windows(2).zip(&easings) {
-            let a = Pos2::new(scale.x(pair[0] as f32), row.center().y);
-            let b = Pos2::new(scale.x(pair[1] as f32), row.center().y);
-            let stroke = if *easing == Easing::Hold {
-                Stroke::new(1.0, theme::KEYFRAME.gamma_multiply(0.25))
-            } else {
-                Stroke::new(2.0, theme::KEYFRAME.gamma_multiply(0.45))
-            };
-            track_painter.line_segment([a, b], stroke);
-        }
-
+        // Keyframes sit on the bar itself, as in Alight Motion: click one to
+        // select it and jump to it, drag to retime it, right-click for easing.
         let mut clicked_key = None;
         let mut drag_key = None;
-        let mut jump_to = None;
         let mut menu_action = None;
-        for &key in &keys {
-            let center = Pos2::new(scale.x(key as f32), row.center().y);
+        for &key in &key_frames {
+            let center = Pos2::new(scale.x(key as f32), bar.center().y);
             let is_selected = self.selected_key
                 == Some(KeySelection {
                     layer: id,
-                    prop,
                     frame: key,
                 });
-            let stroke = if is_selected {
-                Stroke::new(2.0, Color32::WHITE)
+            let (radius, fill, stroke) = if is_selected {
+                (7.0, theme::KEYFRAME, Stroke::new(2.0, Color32::WHITE))
+            } else if selected {
+                (
+                    6.0,
+                    theme::KEYFRAME,
+                    Stroke::new(1.0, Color32::from_black_alpha(140)),
+                )
             } else {
-                Stroke::new(1.0, Color32::from_black_alpha(160))
+                (
+                    5.0,
+                    Color32::WHITE,
+                    Stroke::new(1.0, Color32::from_black_alpha(120)),
+                )
             };
-            diamond(
-                track_painter,
-                center,
-                if is_selected { 6.5 } else { 5.5 },
-                theme::KEYFRAME,
-                stroke,
-            );
+            diamond(track_painter, center, radius, fill, stroke);
 
-            let hit = Rect::from_center_size(center, Vec2::splat(14.0)).intersect(track_clip);
-            if !hit.is_positive() {
+            let hit = Rect::from_center_size(center, Vec2::splat(16.0)).intersect(track_clip);
+            if !hit.is_positive() || locked {
                 continue;
             }
-            let response = ui.interact(
-                hit,
-                Id::new(("key", id, prop, key)),
-                Sense::click_and_drag(),
-            );
+            let response = ui
+                .interact(hit, Id::new(("key", id, key)), Sense::click_and_drag())
+                .on_hover_cursor(CursorIcon::PointingHand);
             if response.clicked() {
                 clicked_key = Some(key);
-            }
-            if response.double_clicked() {
-                jump_to = Some(key);
             }
             if response.drag_started() {
                 drag_key = Some(key);
             }
             response.context_menu(|ui| {
-                ui.label(format!("Keyframe at frame {key}"));
+                ui.label(
+                    egui::RichText::new(format!("Keyframe at {}", timecode(key, self.project.fps)))
+                        .strong(),
+                );
                 ui.separator();
                 for easing in Easing::ALL {
                     if ui.button(easing.label()).clicked() {
@@ -867,43 +715,43 @@ impl AetherApp {
                 }
             });
         }
-
         if let Some(key) = clicked_key.or(drag_key) {
-            self.selected = Some(id);
+            self.select(Some(id));
             self.selected_key = Some(KeySelection {
                 layer: id,
-                prop,
                 frame: key,
             });
+            self.set_frame(key);
         }
         if let Some(key) = drag_key {
             self.timeline.drag = Some(TimelineDrag::Key {
                 layer: id,
-                prop,
                 frame: key,
             });
         }
-        if let Some(key) = jump_to {
-            self.set_frame(key);
-        }
-        let Some(track) = self.project.layer_mut(id).and_then(|l| l.track_mut(prop)) else {
-            return;
-        };
-        if toggle_clicked {
-            track.toggle_key(frame);
-        }
-        match menu_action {
-            Some((key, Some(easing))) => track.set_easing(key, easing),
-            Some((key, None)) => {
-                track.remove_key(key);
-                if self
-                    .selected_key
-                    .is_some_and(|k| k.layer == id && k.prop == prop && k.frame == key)
-                {
-                    self.selected_key = None;
+
+        if let Some(layer) = self.project.layer_mut(id) {
+            match menu_action {
+                Some((key, Some(easing))) => layer.set_easing_at(key, easing),
+                Some((key, None)) => {
+                    layer.remove_keys_at(key);
+                    if self.selected_key
+                        == Some(KeySelection {
+                            layer: id,
+                            frame: key,
+                        })
+                    {
+                        self.selected_key = None;
+                    }
                 }
+                None => {}
             }
-            None => {}
+            if toggle_visible {
+                layer.visible = !layer.visible;
+            }
+            if toggle_lock {
+                layer.locked = !layer.locked;
+            }
         }
     }
 }

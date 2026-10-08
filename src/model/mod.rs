@@ -157,22 +157,6 @@ pub enum PropId {
     BorderColor,
 }
 
-impl PropId {
-    pub fn label(self) -> &'static str {
-        match self {
-            PropId::Position => "Position",
-            PropId::Scale => "Scale",
-            PropId::Rotation => "Rotation",
-            PropId::Opacity => "Opacity",
-            PropId::Fill => "Color",
-            PropId::Size => "Size",
-            PropId::CornerRadius => "Corner radius",
-            PropId::BorderWidth => "Border width",
-            PropId::BorderColor => "Border color",
-        }
-    }
-}
-
 impl Layer {
     fn base(id: u64, name: String, kind: LayerKind, position: Vec2, frames: (i32, i32)) -> Self {
         Self {
@@ -274,6 +258,50 @@ impl Layer {
         frames.sort_unstable();
         frames.dedup();
         frames
+    }
+
+    /// Moves every property's key at `from` to `to`, the way a keyframe on a
+    /// layer's timeline bar moves as one. Refuses (returns false) when some
+    /// property already has a key at `to`, so dragging never swallows keys.
+    pub fn move_keys_at(&mut self, from: i32, to: i32) -> bool {
+        let props = self.props();
+        let blocked = props
+            .iter()
+            .filter_map(|&p| self.track(p))
+            .any(|t| t.has_key(from) && t.has_key(to));
+        if from == to || blocked {
+            return false;
+        }
+        for prop in props {
+            if let Some(track) = self.track_mut(prop) {
+                track.move_key(from, to);
+            }
+        }
+        true
+    }
+
+    pub fn remove_keys_at(&mut self, frame: i32) {
+        for prop in self.props() {
+            if let Some(track) = self.track_mut(prop) {
+                track.remove_key(frame);
+            }
+        }
+    }
+
+    /// Easing of the keys at `frame` (the first property's, if they differ).
+    pub fn easing_at(&self, frame: i32) -> Option<Easing> {
+        self.props()
+            .into_iter()
+            .filter_map(|p| self.track(p))
+            .find_map(|t| t.easing(frame))
+    }
+
+    pub fn set_easing_at(&mut self, frame: i32, easing: Easing) {
+        for prop in self.props() {
+            if let Some(track) = self.track_mut(prop) {
+                track.set_easing(frame, easing);
+            }
+        }
     }
 
     /// Moves the layer in time, keyframes included.
@@ -596,6 +624,28 @@ mod tests {
         let project = settings.build();
         assert_eq!(project.name, "Untitled project");
         assert_eq!(project.duration, 240);
+    }
+
+    #[test]
+    fn keys_on_a_bar_move_together() {
+        let mut project = Project::default();
+        let id = project.add_shape(ShapeKind::Rectangle, 0);
+        let layer = project.layer_mut(id).unwrap();
+        layer.opacity.upsert_key(10, 0.5);
+        layer.transform.rotation.upsert_key(10, 45.0);
+        layer.transform.rotation.upsert_key(20, 90.0);
+
+        assert!(layer.move_keys_at(10, 15));
+        assert_eq!(layer.all_key_frames(), vec![15, 20]);
+        // Rotation already has a key at 20, so this would swallow it.
+        assert!(!layer.move_keys_at(15, 20));
+
+        layer.set_easing_at(15, Easing::EaseOut);
+        assert_eq!(layer.easing_at(15), Some(Easing::EaseOut));
+        assert_eq!(layer.opacity.easing(15), Some(Easing::EaseOut));
+
+        layer.remove_keys_at(15);
+        assert_eq!(layer.all_key_frames(), vec![20]);
     }
 
     #[test]

@@ -34,10 +34,12 @@ grow into a real alternative to After Effects.
 - **Keyframes** on position, scale, rotation, opacity, colour, size, corner
   radius, and border. Click a property's diamond to add a key; once a property
   has keys, editing it at another frame adds a key there automatically.
-  Easing per key: linear, ease in, ease out, ease in & out, hold.
-- **Timeline**: scrub on the ruler, drag layer bars to move them in time
-  (keys move with them), drag bar edges to trim, expand a layer to see and
-  drag its keys, right-click a key for easing or delete. Ctrl+scroll zooms.
+  Easing per key: linear, ease in, ease out, ease in & out, hold. Properties
+  and easing are edited only in the sidebar.
+- **Timeline**: one bar per layer, with its keyframes shown right on the bar.
+  Click a key to select it and jump to it, drag it to retime, right-click for
+  easing or delete. Scrub on the ruler, drag bars to move layers in time
+  (keys move with them), drag bar edges to trim. Ctrl+scroll zooms.
 - **Playback** at the project frame rate, with loop.
 - **Project settings**: resolution presets (16:9, 9:16, 1:1, 4K...), frame
   rate, duration, background colour.
