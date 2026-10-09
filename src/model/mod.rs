@@ -4,6 +4,7 @@ pub mod anim;
 pub mod effects;
 pub mod groups;
 pub mod space;
+pub mod vector;
 
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub use anim::{Animated, Easing, KeyTrack};
 pub use effects::{Effect, EffectKind};
+pub use vector::PathShape;
 
 /// Straight-alpha sRGB colour with components in `0..=1`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -92,6 +94,11 @@ pub enum LayerKind {
         /// Only used by rectangles.
         #[serde(default = "zero_radius")]
         corner_radius: Animated<f32>,
+    },
+    /// A vector path drawn with the pen or freehand tool. Filled with the
+    /// layer's fill and stroked with its border.
+    Path {
+        path: Animated<PathShape>,
     },
     Text {
         text: String,
@@ -197,15 +204,24 @@ impl LayerKind {
         )
     }
 
-    /// Whether the layer can have a fill colour (shapes and text).
+    /// Whether the layer can have a fill colour (shapes, paths and text).
     pub fn has_fill(&self) -> bool {
-        matches!(self, LayerKind::Shape { .. } | LayerKind::Text { .. })
+        matches!(
+            self,
+            LayerKind::Shape { .. } | LayerKind::Path { .. } | LayerKind::Text { .. }
+        )
+    }
+
+    /// Whether the layer's border is drawn (shapes and paths).
+    pub fn has_border(&self) -> bool {
+        matches!(self, LayerKind::Shape { .. } | LayerKind::Path { .. })
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             LayerKind::Shape { .. } => "Shape",
             LayerKind::Text { .. } => "Text",
+            LayerKind::Path { .. } => "Path",
             LayerKind::Image { .. } => "Image",
             LayerKind::Video { .. } => "Video",
             LayerKind::Null => "Null",
@@ -423,6 +439,7 @@ pub enum PropId {
     RotationX,
     RotationY,
     CameraZoom,
+    PathShape,
     LightIntensity,
     ConeAngle,
     ConeFeather,
@@ -540,7 +557,7 @@ impl Layer {
             | LayerKind::Group
             | LayerKind::Adjustment => props.push(PropId::Opacity),
             LayerKind::Audio { .. } => {}
-            LayerKind::Shape { .. } | LayerKind::Text { .. } => {
+            LayerKind::Shape { .. } | LayerKind::Path { .. } | LayerKind::Text { .. } => {
                 props.extend([PropId::Opacity, PropId::Fill]);
                 match self.fill_style {
                     FillStyle::Solid => {}
@@ -562,6 +579,11 @@ impl Layer {
             if *shape == ShapeKind::Rectangle {
                 props.push(PropId::CornerRadius);
             }
+        }
+        if let LayerKind::Path { .. } = &self.kind {
+            props.push(PropId::PathShape);
+        }
+        if self.kind.has_border() {
             props.push(PropId::BorderWidth);
             props.push(PropId::BorderColor);
         }
@@ -592,6 +614,10 @@ impl Layer {
             PropId::RotationY => &self.transform.rotation_y,
             PropId::CameraZoom => match &self.kind {
                 LayerKind::Camera { zoom } => zoom,
+                _ => return None,
+            },
+            PropId::PathShape => match &self.kind {
+                LayerKind::Path { path } => path,
                 _ => return None,
             },
             PropId::LightIntensity => match &self.kind {
@@ -641,6 +667,10 @@ impl Layer {
             PropId::RotationY => &mut self.transform.rotation_y,
             PropId::CameraZoom => match &mut self.kind {
                 LayerKind::Camera { zoom } => zoom,
+                _ => return None,
+            },
+            PropId::PathShape => match &mut self.kind {
+                LayerKind::Path { path } => path,
                 _ => return None,
             },
             PropId::LightIntensity => match &mut self.kind {
@@ -951,6 +981,41 @@ impl Project {
             self.new_layer_frames(frame),
         );
         layer.transform.z = Animated::new(-zoom);
+        self.push(layer)
+    }
+
+    /// Adds a path layer whose points are given in canvas pixels. The layer
+    /// sits at the middle of the points, which are stored relative to it.
+    pub fn add_path(&mut self, mut shape: PathShape, frame: i32, freehand: bool) -> u64 {
+        let id = self.alloc_id();
+        let name = self.unique_name(if freehand { "Drawing" } else { "Path" });
+        let center = shape
+            .bounds()
+            .map_or(self.center(), |r| r.center().to_vec2());
+        shape.translate(-center);
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Path {
+                path: Animated::new(shape),
+            },
+            center,
+            self.new_layer_frames(frame),
+        );
+        layer.border = Border {
+            enabled: true,
+            width: Animated::new(if freehand { 10.0 } else { 6.0 }),
+            color: Animated::new(Color::new(0.33, 0.55, 1.0, 1.0)),
+        };
+        // Freehand lines are strokes; pen paths start filled and outlined.
+        layer.fill = Animated::new(if freehand {
+            Color::new(1.0, 1.0, 1.0, 0.0)
+        } else {
+            Color::new(1.0, 0.75, 0.3, 1.0)
+        });
+        if !freehand {
+            layer.border.color = Animated::new(Color::WHITE);
+        }
         self.push(layer)
     }
 

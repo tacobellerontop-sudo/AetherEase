@@ -10,6 +10,7 @@ use crate::compose;
 use crate::model::{LayerKind, Project};
 use crate::render::{self, View};
 use crate::ui::icons::{self, Icon};
+use crate::ui::pen::{PointDrag, Tool};
 use crate::ui::theme;
 
 const HANDLE_RADIUS: f32 = 6.0;
@@ -31,6 +32,12 @@ pub struct ViewportState {
     pub pan: Vec2,
     drag: Option<GizmoDrag>,
     preview: Preview,
+    pub tool: Tool,
+    /// The path layer the pen is adding points to.
+    pub pen: Option<u64>,
+    /// The freehand stroke being drawn, in canvas pixels.
+    pub stroke: Vec<Vec2>,
+    pub point_drag: Option<PointDrag>,
 }
 
 impl Default for ViewportState {
@@ -41,6 +48,10 @@ impl Default for ViewportState {
             pan: Vec2::ZERO,
             drag: None,
             preview: Preview::default(),
+            tool: Tool::default(),
+            pen: None,
+            stroke: Vec::new(),
+            point_drag: None,
         }
     }
 }
@@ -106,8 +117,19 @@ impl AetherApp {
             );
         }
 
-        self.handle_gizmo(ui, view, &response);
-        self.draw_selection(&painter, view);
+        match self.viewport.tool {
+            Tool::Select => {
+                if !self.edit_path_points(ui, view, &response) {
+                    self.handle_gizmo(ui, view, &response);
+                }
+                self.draw_selection(&painter, view);
+            }
+            Tool::Pen => self.pen_tool(ui, view, &response),
+            Tool::Brush => self.brush_tool(ui, view, &response),
+        }
+        self.draw_path_points(&painter, view);
+        self.draw_pen_preview(&painter, view, response.hover_pos());
+        self.draw_brush_preview(&painter, view);
         self.viewport_overlay(ui, rect);
     }
 
@@ -475,6 +497,32 @@ impl AetherApp {
                         );
                         ui.add_space(4.0);
                     });
+                });
+        });
+
+        // Drawing tools, top left.
+        let tools = Rect::from_min_size(rect.left_top() + vec2(12.0, 12.0), vec2(38.0, 112.0));
+        ui.scope_builder(UiBuilder::new().max_rect(tools), |ui| {
+            egui::Frame::NONE
+                .fill(theme::BG_PANEL.gamma_multiply(0.92))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::same(3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for (tool, icon, tip) in [
+                        (Tool::Select, Icon::Pointer, "Select and move (V)"),
+                        (
+                            Tool::Pen,
+                            Icon::Pen,
+                            "Pen: click for points, drag for curves (P)",
+                        ),
+                        (Tool::Brush, Icon::Brush, "Freehand drawing (B)"),
+                    ] {
+                        let on = self.viewport.tool == tool;
+                        if icons::icon_button(ui, icon, tip, on, true, 32.0).clicked() {
+                            self.set_tool(tool);
+                        }
+                    }
                 });
         });
 

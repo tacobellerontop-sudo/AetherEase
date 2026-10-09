@@ -10,6 +10,7 @@ use crate::history::History;
 use crate::model::{LayerKind, LightKind, Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::ui::export_dialog::ExportDialog;
+use crate::ui::pen::Tool;
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
 use crate::video;
 
@@ -506,8 +507,20 @@ impl AetherApp {
         if key(Key::End) {
             self.set_frame(self.project.duration - 1);
         }
-        if key(Key::Escape) {
-            self.select(None);
+        if key(Key::Escape) || key(Key::Enter) {
+            // Finishing a pen path comes before deselecting.
+            if !self.finish_pen() {
+                self.select(None);
+            }
+        }
+        if key(Key::V) {
+            self.set_tool(Tool::Select);
+        }
+        if key(Key::P) {
+            self.set_tool(Tool::Pen);
+        }
+        if key(Key::B) {
+            self.set_tool(Tool::Brush);
         }
     }
 

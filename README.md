@@ -76,6 +76,15 @@ grow into a real alternative to After Effects.
   stack, inside their area (the whole frame by default). They stay flat over
   the frame whatever the camera does.
 - **Solids**: a layer of colour the size of the canvas.
+- **Pen and freehand drawing**: the tool strip at the canvas's top left has
+  Select (V), Pen (P) and Brush (B). The pen places points with a click and
+  curves with a drag; click the first point or press Enter to finish. The
+  brush turns a freehand stroke into a smooth, editable path. Path layers
+  show their points when selected: drag points and handles (Alt breaks the
+  handle pair), double-click a point to make it smooth or sharp, Alt-click to
+  delete it. Key the path to morph between shapes with the same number of
+  points. Paths are filled and stroked (the Stroke page sets width and
+  colour).
 - **Video clips**: MP4, MOV, MKV, WebM, AVI and GIF, decoded through ffmpeg
   (the same one export uses). Clips are 3D layers like everything else, keep
   their sound (with a volume control) in playback and export, and are
@@ -139,6 +148,7 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/export.rs` | MP4 (via ffmpeg), GIF and PNG export on a background thread |
 | `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending, effects, adjustment layers |
 | `src/light.rs` | Light layers shading the layers they reach |
+| `src/model/vector.rs` | Editable vector paths: points, handles, morphing, freehand smoothing |
 | `src/video.rs` | Video clips: probing and frame decoding through ffmpeg |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
@@ -153,6 +163,5 @@ preview, thumbnails and export all come from the same tiny-skia compositor.
 
 ## Roadmap
 
-- Freehand drawing and editable vector paths
 - Graph editor for custom bezier easing
 - Lottie and Alight Motion project import

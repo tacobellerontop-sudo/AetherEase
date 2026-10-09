@@ -130,7 +130,7 @@ fn render_stack(
         let to_px = |p: Vec2| geom.local_to_canvas(p) * scale;
         // A group's members are lit one by one as the group is drawn.
         let lit = !lights.is_empty() && !is_group;
-        let has_border = matches!(layer.kind, LayerKind::Shape { .. }) && layer.border.enabled;
+        let has_border = layer.kind.has_border() && layer.border.enabled;
         let has_effects = layer.effects.iter().any(|e| e.enabled);
         // A partly transparent layer with a border must be flattened first,
         // or the fill would show through the border.
@@ -198,32 +198,12 @@ fn draw_layer(
         } => {
             let outline =
                 render::shape_outline(*shape, size.sample(frame), corner_radius.sample(frame));
-            let Some(path) = build_path(&path::polygon(&outline), to_px) else {
-                return;
-            };
-            let paint = fill_paint(layer, geom.size, frame, opacity, to_px);
-            target.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-            if layer.border.enabled {
-                let width =
-                    layer.border.width.sample(frame).max(0.0) * geom.average_scale() * scale;
-                if width > 0.0 {
-                    let mut paint = Paint::default();
-                    paint.set_color(color(layer.border.color.sample(frame), opacity));
-                    paint.anti_alias = true;
-                    let stroke = Stroke {
-                        width,
-                        line_join: LineJoin::Round,
-                        ..Stroke::default()
-                    };
-                    target.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-                }
-            }
+            let segs = path::polygon(&outline);
+            fill_and_stroke(target, layer, &segs, geom, frame, scale, opacity, to_px);
+        }
+        LayerKind::Path { path } => {
+            let segs = path.sample(frame).segs();
+            fill_and_stroke(target, layer, &segs, geom, frame, scale, opacity, to_px);
         }
         LayerKind::Text { text, font_size } => {
             let layout = text::layout(text, *font_size);
@@ -264,6 +244,47 @@ fn draw_layer(
         | LayerKind::Adjustment
         | LayerKind::Group
         | LayerKind::Audio { .. } => {}
+    }
+}
+
+/// Fills an outline with the layer's fill, then strokes it with its border.
+#[allow(clippy::too_many_arguments)]
+fn fill_and_stroke(
+    target: &mut Pixmap,
+    layer: &Layer,
+    segs: &[Seg],
+    geom: &LayerGeom,
+    frame: f32,
+    scale: f32,
+    opacity: f32,
+    to_px: &dyn Fn(Vec2) -> Vec2,
+) {
+    let Some(path) = build_path(segs, to_px) else {
+        return;
+    };
+    let paint = fill_paint(layer, geom.size, frame, opacity, to_px);
+    target.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+    if !layer.border.enabled {
+        return;
+    }
+    let width = layer.border.width.sample(frame).max(0.0) * geom.average_scale() * scale;
+    if width > 0.0 {
+        let mut paint = Paint::default();
+        paint.set_color(color(layer.border.color.sample(frame), opacity));
+        paint.anti_alias = true;
+        let stroke = Stroke {
+            width,
+            line_join: LineJoin::Round,
+            line_cap: tiny_skia::LineCap::Round,
+            ..Stroke::default()
+        };
+        target.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 }
 

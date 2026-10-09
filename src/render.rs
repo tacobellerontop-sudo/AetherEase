@@ -106,6 +106,12 @@ pub fn layer_geom(project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
     let (size, center) = match &layer.kind {
         LayerKind::Shape { size, .. } => (size.sample(frame), Vec2::ZERO),
         LayerKind::Text { text, font_size } => (text::layout(text, *font_size).size, Vec2::ZERO),
+        LayerKind::Path { path } => path
+            .sample(frame)
+            .bounds()
+            .map_or((Vec2::ZERO, Vec2::ZERO), |r| {
+                (r.size(), r.center().to_vec2())
+            }),
         LayerKind::Image { size, .. } | LayerKind::Video { size, .. } => (*size, Vec2::ZERO),
         LayerKind::Null => (Vec2::splat(NULL_SIZE), Vec2::ZERO),
         LayerKind::Light { .. } => (Vec2::splat(LIGHT_SIZE), Vec2::ZERO),

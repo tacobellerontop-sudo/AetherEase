@@ -158,7 +158,10 @@ impl Project {
     }
 }
 
-fn shift<T: super::anim::Lerp + std::ops::Add<Output = T>>(track: &mut Animated<T>, delta: T) {
+fn shift<T: super::anim::Lerp + Copy + std::ops::Add<Output = T>>(
+    track: &mut Animated<T>,
+    delta: T,
+) {
     track.value = track.value + delta;
     for key in &mut track.keyframes {
         key.value = key.value + delta;

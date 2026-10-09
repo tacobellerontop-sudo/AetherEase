@@ -56,6 +56,9 @@ pub enum Icon {
     Adjustment,
     Solid,
     Video,
+    Pen,
+    Brush,
+    Pointer,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -253,6 +256,42 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             painter.rect_stroke(r, CornerRadius::same(3), stroke, StrokeKind::Middle);
             painter.add(Shape::convex_polygon(
                 vec![p(-0.15, -0.25), p(0.3, 0.0), p(-0.15, 0.25)],
+                color,
+                Stroke::NONE,
+            ));
+        }
+        Icon::Pen => {
+            // A fountain pen nib pointing down-left.
+            let nib = vec![
+                p(-0.6, 0.6),
+                p(-0.35, -0.05),
+                p(0.15, -0.55),
+                p(0.55, -0.15),
+                p(0.05, 0.35),
+            ];
+            painter.add(Shape::closed_line(nib, stroke));
+            line(&[p(-0.6, 0.6), p(-0.1, 0.1)]);
+            painter.circle_filled(p(-0.05, 0.05), 0.09 * s, color);
+        }
+        Icon::Brush => {
+            // A brush handle with a curved stroke under it.
+            line(&[p(0.6, -0.65), p(-0.05, 0.05)]);
+            painter.circle_filled(p(-0.15, 0.15), 0.18 * s, color);
+            let swoosh: Vec<Pos2> = (0..=12)
+                .map(|i| {
+                    let t = i as f32 / 12.0;
+                    p(
+                        -0.7 + t * 0.9,
+                        0.55 + (t * std::f32::consts::PI).sin() * 0.15,
+                    )
+                })
+                .collect();
+            painter.add(Shape::line(swoosh, stroke));
+        }
+        Icon::Pointer => {
+            // An arrow cursor.
+            painter.add(Shape::convex_polygon(
+                vec![p(-0.45, -0.65), p(0.45, 0.1), p(0.0, 0.15), p(-0.2, 0.6)],
                 color,
                 Stroke::NONE,
             ));

@@ -86,6 +86,7 @@ pub fn layer_color(kind: &LayerKind) -> Color32 {
     match kind {
         LayerKind::Shape { .. } => Color32::from_rgb(76, 126, 240),
         LayerKind::Text { .. } => Color32::from_rgb(232, 138, 64),
+        LayerKind::Path { .. } => Color32::from_rgb(64, 150, 220),
         LayerKind::Image { .. } => Color32::from_rgb(52, 176, 124),
         LayerKind::Video { .. } => Color32::from_rgb(214, 84, 150),
         LayerKind::Null => Color32::from_rgb(200, 72, 92),
@@ -108,6 +109,7 @@ pub fn layer_icon(kind: &LayerKind) -> Icon {
             ShapeKind::Star { .. } => Icon::Star,
         },
         LayerKind::Text { .. } => Icon::Text,
+        LayerKind::Path { .. } => Icon::Pen,
         LayerKind::Image { .. } => Icon::Image,
         LayerKind::Video { .. } => Icon::Video,
         LayerKind::Null => Icon::Null,

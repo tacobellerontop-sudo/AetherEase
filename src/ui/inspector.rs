@@ -199,7 +199,8 @@ impl AetherApp {
 
         // Property categories as icon tiles, one page at a time, the way
         // Alight Motion groups a layer's settings.
-        let is_shape = matches!(layer.kind, LayerKind::Shape { .. });
+        let has_border = layer.kind.has_border();
+        let is_path = matches!(layer.kind, LayerKind::Path { .. });
         let has_content = layer.kind.is_visual();
         let is_group = matches!(layer.kind, LayerKind::Group);
         let is_audio = matches!(layer.kind, LayerKind::Audio { .. });
@@ -211,7 +212,7 @@ impl AetherApp {
         let mut page = ui
             .data(|d| d.get_temp::<Page>(page_id))
             .unwrap_or(Page::Transform);
-        if (page == Page::Border && !is_shape)
+        if (page == Page::Border && !has_border)
             || (matches!(page, Page::Fill | Page::Effects) && !has_content)
             || (page == Page::Content && !has_own_content)
         {
@@ -236,8 +237,9 @@ impl AetherApp {
         if has_content {
             pages.push((Page::Fill, Icon::Fill, "Color"));
         }
-        if is_shape {
-            pages.push((Page::Border, Icon::Border, "Border"));
+        if has_border {
+            let label = if is_path { "Stroke" } else { "Border" };
+            pages.push((Page::Border, Icon::Border, label));
         }
         if has_content {
             pages.push((Page::Effects, Icon::Effects, "Effects"));
@@ -358,6 +360,30 @@ impl AetherApp {
                     size,
                     corner_radius,
                 } => shape_section(ui, shape, size, corner_radius, frame),
+                LayerKind::Path { path } => {
+                    Grid::new("path_grid").num_columns(3).show(ui, |ui| {
+                        key_toggle(ui, path, frame);
+                        ui.label("Path");
+                        let mut shape = path.sample(frame as f32);
+                        ui.label(format!("{} points", shape.nodes.len()));
+                        ui.end_row();
+                        ui.label("");
+                        ui.label("");
+                        if ui.checkbox(&mut shape.closed, "Closed").changed() {
+                            path.set(frame, shape);
+                        }
+                        ui.end_row();
+                    });
+                    ui.add_space(4.0);
+                    for tip in [
+                        "Drag points and their handles on the canvas.",
+                        "Double-click a point to make it smooth or sharp.",
+                        "Alt-click a point to delete it.",
+                        "Key the path to morph it between shapes with the same number of points.",
+                    ] {
+                        ui.label(RichText::new(tip).small().weak());
+                    }
+                }
                 LayerKind::Text { text, font_size } => {
                     ui.add(
                         egui::TextEdit::multiline(text)

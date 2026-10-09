@@ -7,7 +7,9 @@ use crate::model::ShapeKind;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
 
-const SHORTCUTS: [(&str, &str); 14] = [
+const SHORTCUTS: [(&str, &str); 16] = [
+    ("V / P / B", "Select, pen and freehand tools"),
+    ("Enter / Esc", "Finish the pen path"),
     ("Space", "Play / pause"),
     ("← / →", "Previous / next frame"),
     ("Home / End", "First / last frame"),

@@ -62,29 +62,29 @@ impl Easing {
 }
 
 /// A value type that can be interpolated between keyframes.
-pub trait Lerp: Copy + PartialEq {
-    fn lerp(a: Self, b: Self, t: f32) -> Self;
+pub trait Lerp: Clone + PartialEq {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self;
 }
 
 impl Lerp for f32 {
-    fn lerp(a: Self, b: Self, t: f32) -> Self {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self {
         a + (b - a) * t
     }
 }
 
 impl Lerp for Vec2 {
-    fn lerp(a: Self, b: Self, t: f32) -> Self {
-        a + (b - a) * t
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self {
+        *a + (*b - *a) * t
     }
 }
 
 impl Lerp for Color {
-    fn lerp(a: Self, b: Self, t: f32) -> Self {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self {
         Color::new(
-            f32::lerp(a.r, b.r, t),
-            f32::lerp(a.g, b.g, t),
-            f32::lerp(a.b, b.b, t),
-            f32::lerp(a.a, b.a, t),
+            f32::lerp(&a.r, &b.r, t),
+            f32::lerp(&a.g, &b.g, t),
+            f32::lerp(&a.b, &b.b, t),
+            f32::lerp(&a.a, &b.a, t),
         )
     }
 }
@@ -123,20 +123,20 @@ impl<T: Lerp> Animated<T> {
     pub fn sample(&self, frame: f32) -> T {
         let keys = &self.keyframes;
         let (Some(first), Some(last)) = (keys.first(), keys.last()) else {
-            return self.value;
+            return self.value.clone();
         };
         if frame <= first.frame as f32 {
-            return first.value;
+            return first.value.clone();
         }
         if frame >= last.frame as f32 {
-            return last.value;
+            return last.value.clone();
         }
         // First keyframe strictly after `frame`; there is at least one before it.
         let next = keys.partition_point(|k| k.frame as f32 <= frame);
         let a = &keys[next - 1];
         let b = &keys[next];
         let t = (frame - a.frame as f32) / (b.frame - a.frame) as f32;
-        T::lerp(a.value, b.value, a.easing.apply(t))
+        T::lerp(&a.value, &b.value, a.easing.apply(t))
     }
 
     /// Sets the property's value as seen at `frame`. Animated properties get a
