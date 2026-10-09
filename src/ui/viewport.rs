@@ -320,7 +320,10 @@ impl AetherApp {
     }
 
     fn handle_at(&self, view: View, pointer: Pos2) -> Option<Handle> {
-        let (_, geom) = self.editable_selection()?;
+        let (id, geom) = self.editable_selection()?;
+        if self.project.layer(id).is_some_and(is_light) {
+            return None;
+        }
         if pointer.distance(rotate_handle_pos(view, &geom)) <= HANDLE_RADIUS + 3.0 {
             return Some(Handle::Rotate);
         }
@@ -390,6 +393,12 @@ impl AetherApp {
         }
         let geom = render::layer_geom(&self.project, layer, self.frame as f32);
         if !geom.in_front() {
+            return;
+        }
+        if is_light(layer) {
+            // Lights only move; their marker gets a ring.
+            let c = view.to_screen(geom.anchor_canvas());
+            painter.circle_stroke(c, 20.0, Stroke::new(1.5, theme::ACCENT));
             return;
         }
         let corners = geom
@@ -523,4 +532,8 @@ fn draw_outside_dim(painter: &egui::Painter, rect: Rect, view: View, project: &P
         Stroke::new(1.0, Color32::from_gray(70)),
         StrokeKind::Outside,
     );
+}
+
+fn is_light(layer: &crate::model::Layer) -> bool {
+    matches!(layer.kind, LayerKind::Light { .. })
 }

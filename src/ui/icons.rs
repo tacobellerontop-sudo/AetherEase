@@ -52,6 +52,9 @@ pub enum Icon {
     Ungroup,
     Right,
     Audio,
+    Light,
+    Adjustment,
+    Solid,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -343,6 +346,30 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             // A music note.
             line(&[p(0.25, 0.35), p(0.25, -0.6), p(0.6, -0.4)]);
             painter.circle_filled(p(0.02, 0.38), 0.24 * s, color);
+        }
+        Icon::Light => {
+            // A bulb-like sun: a disc with eight rays.
+            painter.circle_filled(c, 0.3 * s, color);
+            for i in 0..8 {
+                let a = TAU * i as f32 / 8.0;
+                let d = vec2(a.cos(), a.sin());
+                line(&[c + d * 0.5 * s, c + d * 0.8 * s]);
+            }
+        }
+        Icon::Adjustment => {
+            // Half-filled circle, the usual "adjust" glyph.
+            painter.circle_stroke(c, 0.7 * s, stroke);
+            let half: Vec<Pos2> = (0..=16)
+                .map(|i| {
+                    let a = -FRAC_PI_2 + std::f32::consts::PI * i as f32 / 16.0;
+                    c + vec2(a.cos(), a.sin()) * 0.7 * s
+                })
+                .collect();
+            painter.add(Shape::convex_polygon(half, color, Stroke::NONE));
+        }
+        Icon::Solid => {
+            let r = Rect::from_center_size(c, vec2(1.4 * s, 1.0 * s));
+            painter.rect_filled(r, CornerRadius::same(2), color);
         }
         Icon::Link => {
             // Two chain links at an angle.

@@ -4,7 +4,7 @@
 use egui::{Color32, Painter, Pos2, Shape, Stroke, Vec2, vec2};
 
 use crate::model::space::{Affine3, NEAR, Projection, vec3};
-use crate::model::{Layer, LayerKind, NULL_SIZE, Project, ShapeKind};
+use crate::model::{LIGHT_SIZE, Layer, LayerKind, LightKind, NULL_SIZE, Project, ShapeKind};
 use crate::text;
 
 /// Maps canvas pixels to screen points.
@@ -108,6 +108,11 @@ pub fn layer_geom(project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
         LayerKind::Text { text, font_size } => (text::layout(text, *font_size).size, Vec2::ZERO),
         LayerKind::Image { size, .. } => (*size, Vec2::ZERO),
         LayerKind::Null => (Vec2::splat(NULL_SIZE), Vec2::ZERO),
+        LayerKind::Light { .. } => (Vec2::splat(LIGHT_SIZE), Vec2::ZERO),
+        LayerKind::Adjustment => (
+            vec2(project.width as f32, project.height as f32),
+            Vec2::ZERO,
+        ),
         LayerKind::Camera { .. } | LayerKind::Audio { .. } => (Vec2::ZERO, Vec2::ZERO),
         LayerKind::Group => group_bounds(project, layer, &world, frame, 0)
             .map_or((Vec2::ZERO, layer.transform.anchor), |r| {
@@ -182,6 +187,10 @@ pub fn hit_test(project: &Project, layer: &Layer, frame: f32, p: Vec2) -> bool {
             .any(|m| hit_test(project, m, frame, p));
     }
     let geom = layer_geom(project, layer, frame);
+    if matches!(layer.kind, LayerKind::Light { .. }) {
+        // Lights are grabbed by their marker, whichever way they face.
+        return geom.in_front() && (geom.anchor_canvas() - p).length() <= LIGHT_SIZE * 0.5;
+    }
     let Some(local) = geom.canvas_to_local(p) else {
         return false;
     };
@@ -293,14 +302,59 @@ pub fn shape_outline(shape: ShapeKind, size: Vec2, corner_radius: f32) -> Vec<Ve
     }
 }
 
-/// Editor-only overlays: each active null's box.
+/// Editor-only overlays: each active null's box and each light.
 pub fn draw_guides(painter: &Painter, view: View, project: &Project, frame: i32) {
     for layer in project
         .layers
         .iter()
-        .filter(|l| matches!(l.kind, LayerKind::Null) && project.is_shown_at(l, frame))
+        .filter(|l| project.is_shown_at(l, frame))
     {
-        draw_null(painter, view, &layer_geom(project, layer, frame as f32));
+        match &layer.kind {
+            LayerKind::Null => {
+                draw_null(painter, view, &layer_geom(project, layer, frame as f32));
+            }
+            LayerKind::Light { light, .. } => {
+                draw_light(
+                    painter,
+                    view,
+                    &layer_geom(project, layer, frame as f32),
+                    *light,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A light: a small sun at its position and, for lights with a direction,
+/// a line showing where it points.
+fn draw_light(painter: &Painter, view: View, geom: &LayerGeom, light: LightKind) {
+    if !geom.in_front() {
+        return;
+    }
+    let color = Color32::from_rgb(255, 205, 80);
+    let c = view.to_screen(geom.anchor_canvas());
+    if matches!(light, LightKind::Spot | LightKind::Parallel) {
+        let tip = geom
+            .projection
+            .project(geom.world.point(vec3(0.0, 0.0, LIGHT_SIZE * 2.5)))
+            .map(|p| view.to_screen(p));
+        if let Some(tip) = tip {
+            painter.extend(Shape::dashed_line(
+                &[c, tip],
+                Stroke::new(1.5, color),
+                6.0,
+                4.0,
+            ));
+            painter.circle_filled(tip, 3.0, color);
+        }
+    }
+    painter.circle_filled(c, 7.0, color);
+    let stroke = Stroke::new(1.5, color);
+    for i in 0..8 {
+        let (s, k) = (i as f32 * std::f32::consts::FRAC_PI_4).sin_cos();
+        let d = vec2(k, s);
+        painter.line_segment([c + d * 10.0, c + d * 15.0], stroke);
     }
 }
 

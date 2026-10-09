@@ -7,7 +7,7 @@ use egui::{Context, Key, KeyboardShortcut, Modifiers, ViewportCommand};
 use crate::audio::{self, AudioEngine, Waveforms};
 use crate::compose::{self, Assets};
 use crate::history::History;
-use crate::model::{LayerKind, Project, ProjectSettings, ShapeKind};
+use crate::model::{LayerKind, LightKind, Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::ui::export_dialog::ExportDialog;
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
@@ -159,6 +159,21 @@ impl AetherApp {
 
     pub fn add_camera(&mut self) {
         let id = self.project.add_camera(self.frame);
+        self.select(Some(id));
+    }
+
+    pub fn add_light(&mut self) {
+        let id = self.project.add_light(LightKind::Point, self.frame);
+        self.select(Some(id));
+    }
+
+    pub fn add_adjustment(&mut self) {
+        let id = self.project.add_adjustment(self.frame);
+        self.select(Some(id));
+    }
+
+    pub fn add_solid(&mut self) {
+        let id = self.project.add_solid(self.frame);
         self.select(Some(id));
     }
 

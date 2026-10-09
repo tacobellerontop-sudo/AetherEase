@@ -1,0 +1,796 @@
+{
+  "name": "Lights demo",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration": 180,
+  "background": {
+    "r": 0.04,
+    "g": 0.04,
+    "b": 0.07,
+    "a": 1.0
+  },
+  "layers": [
+    {
+      "id": 1,
+      "name": "Back panel",
+      "kind": {
+        "Shape": {
+          "shape": "Rectangle",
+          "size": {
+            "value": {
+              "x": 1300.0,
+              "y": 700.0
+            }
+          },
+          "corner_radius": {
+            "value": 40.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": 400.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 0.3,
+          "g": 0.18,
+          "b": 0.55,
+          "a": 1.0
+        }
+      },
+      "fill_style": "Radial",
+      "fill_end": {
+        "value": {
+          "r": 0.06,
+          "g": 0.05,
+          "b": 0.14,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Card",
+      "kind": {
+        "Shape": {
+          "shape": "Rectangle",
+          "size": {
+            "value": {
+              "x": 820.0,
+              "y": 460.0
+            }
+          },
+          "corner_radius": {
+            "value": 28.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": 0.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0,
+          "keyframes": [
+            {
+              "frame": 0,
+              "value": -25.0,
+              "easing": "EaseInOut"
+            },
+            {
+              "frame": 90,
+              "value": 25.0,
+              "easing": "EaseInOut"
+            },
+            {
+              "frame": 179,
+              "value": -25.0,
+              "easing": "Linear"
+            }
+          ]
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 0.42,
+          "g": 0.27,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "fill_style": "Linear",
+      "fill_end": {
+        "value": {
+          "r": 0.15,
+          "g": 0.75,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 35.0
+      },
+      "effects": [
+        {
+          "enabled": true,
+          "kind": {
+            "Shadow": {
+              "color": {
+                "value": {
+                  "r": 0.0,
+                  "g": 0.0,
+                  "b": 0.0,
+                  "a": 0.6
+                }
+              },
+              "distance": {
+                "value": 18.0
+              },
+              "angle": {
+                "value": 90.0
+              },
+              "blur": {
+                "value": 16.0
+              }
+            }
+          }
+        }
+      ],
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Title",
+      "kind": {
+        "Text": {
+          "text": "AetherEase 3D",
+          "font_size": 110.0
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": -220.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Star",
+      "kind": {
+        "Shape": {
+          "shape": {
+            "Star": {
+              "points": 5,
+              "inner_ratio": 0.45
+            }
+          },
+          "size": {
+            "value": {
+              "x": 220.0,
+              "y": 220.0
+            }
+          },
+          "corner_radius": {
+            "value": 0.0
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 1450.0,
+            "y": 300.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0,
+          "keyframes": [
+            {
+              "frame": 0,
+              "value": 0.0,
+              "easing": "Linear"
+            },
+            {
+              "frame": 179,
+              "value": 360.0,
+              "easing": "Linear"
+            }
+          ]
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": -120.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 0.78,
+          "b": 0.2,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "blend": "Screen",
+      "effects": [
+        {
+          "enabled": true,
+          "kind": {
+            "Glow": {
+              "color": {
+                "value": {
+                  "r": 1.0,
+                  "g": 0.85,
+                  "b": 0.4,
+                  "a": 1.0
+                }
+              },
+              "radius": {
+                "value": 24.0
+              },
+              "strength": {
+                "value": 1.5
+              }
+            }
+          }
+        }
+      ],
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Orbit",
+      "kind": "Null",
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": 0.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0,
+          "keyframes": [
+            {
+              "frame": 0,
+              "value": -30.0,
+              "easing": "EaseInOut"
+            },
+            {
+              "frame": 90,
+              "value": 30.0,
+              "easing": "EaseInOut"
+            },
+            {
+              "frame": 179,
+              "value": -30.0,
+              "easing": "Linear"
+            }
+          ]
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "Camera",
+      "kind": {
+        "Camera": {
+          "zoom": {
+            "value": 2666.688
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": -2666.688
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      },
+      "parent": 5
+    },
+    {
+      "id": 7,
+      "name": "Ambient light",
+      "kind": {
+        "Light": {
+          "light": "Ambient",
+          "intensity": {
+            "value": 0.45
+          },
+          "cone": {
+            "value": 90.0
+          },
+          "feather": {
+            "value": 0.5
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 960.0,
+            "y": 540.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": 0.0
+        },
+        "rotation_x": {
+          "value": 0.0
+        },
+        "rotation_y": {
+          "value": 0.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 0.55,
+          "g": 0.6,
+          "b": 0.9,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 0.06,
+          "g": 0.05,
+          "b": 0.14,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "Spot light",
+      "kind": {
+        "Light": {
+          "light": "Spot",
+          "intensity": {
+            "value": 1.3
+          },
+          "cone": {
+            "value": 70.0
+          },
+          "feather": {
+            "value": 0.6
+          }
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "in_frame": 0,
+      "out_frame": 180,
+      "transform": {
+        "position": {
+          "value": {
+            "x": 560.0,
+            "y": 300.0
+          }
+        },
+        "scale": {
+          "value": {
+            "x": 1.0,
+            "y": 1.0
+          }
+        },
+        "rotation": {
+          "value": 0.0
+        },
+        "anchor": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "z": {
+          "value": -500.0
+        },
+        "rotation_x": {
+          "value": -20.0
+        },
+        "rotation_y": {
+          "value": 38.0
+        }
+      },
+      "opacity": {
+        "value": 1.0
+      },
+      "fill": {
+        "value": {
+          "r": 1.0,
+          "g": 0.92,
+          "b": 0.78,
+          "a": 1.0
+        }
+      },
+      "fill_end": {
+        "value": {
+          "r": 0.06,
+          "g": 0.05,
+          "b": 0.14,
+          "a": 1.0
+        }
+      },
+      "gradient_angle": {
+        "value": 0.0
+      },
+      "border": {
+        "enabled": false,
+        "width": {
+          "value": 4.0
+        },
+        "color": {
+          "value": {
+            "r": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+            "a": 1.0
+          }
+        }
+      }
+    }
+  ],
+  "next_id": 11
+}

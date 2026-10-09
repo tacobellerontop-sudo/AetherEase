@@ -33,8 +33,9 @@ grow into a real alternative to After Effects.
 - **Color page**: solid fills or linear and radial gradients (with
   keyframable colours and angle), opacity, and 17 blending modes (Multiply,
   Screen, Overlay, Add, Difference, Hue, and more).
-- **Effects page**: blur, drop shadow (colour, distance, angle, softness)
-  and glow (colour, radius, strength), stacked in any order, each with
+- **Effects page**: blur, drop shadow (colour, distance, angle, softness),
+  glow (colour, radius, strength) and adjust color (brightness, contrast,
+  saturation, hue), stacked in any order, each with
   keyframable settings that show on the layer's timeline bar.
 - **One renderer for everything**: frames are composited on the CPU with
   tiny-skia, so the canvas, thumbnails and export match exactly. Text
@@ -65,6 +66,16 @@ grow into a real alternative to After Effects.
   nearer layers cover farther ones. Add a **Camera** layer to move, turn and
   zoom the view; parent it to a null to orbit. Without one, depth 0 looks
   exactly like 2D. See `examples/3d-demo.aether`.
+- **Lights**: point, spot, parallel and ambient lights with colour and
+  intensity (spots add cone and feather). As in After Effects, once a scene
+  has a light, layers are shaded by it and go dark where no light reaches.
+  Move a light by its sun marker; spot and parallel lights point along their
+  dashed line and are aimed with Tilt X and Turn Y. See
+  `examples/lights-demo.aether`.
+- **Adjustment layers**: their effects change everything below them in the
+  stack, inside their area (the whole frame by default). They stay flat over
+  the frame whatever the camera does.
+- **Solids**: a layer of colour the size of the canvas.
 - **Canvas editing**: click to select, drag to move, corner handles to scale
   (Shift for uniform), top handle to rotate (Shift snaps to 15°). Scroll to
   zoom, middle or right drag to pan.
@@ -122,7 +133,8 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
 | `src/audio.rs` | Audio playback in step with the playhead, waveforms |
 | `src/export.rs` | MP4 (via ffmpeg), GIF and PNG export on a background thread |
-| `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending |
+| `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending, effects, adjustment layers |
+| `src/light.rs` | Light layers shading the layers they reach |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
 | `src/render.rs` | Layer geometry, paint order, hit testing, editor guides |
@@ -131,15 +143,12 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/recent.rs` | Recent projects list and the projects folder |
 | `src/ui/` | Home screen and new project dialog, menu and toolbar, canvas viewport, inspector, timeline |
 
-The UI is built with [egui](https://github.com/emilk/egui)/eframe. The preview
-is drawn with egui's painter for now; a dedicated renderer (for export,
-effects and masks) is the next big piece.
+The UI is built with [egui](https://github.com/emilk/egui)/eframe. The canvas
+preview, thumbnails and export all come from the same tiny-skia compositor.
 
 ## Roadmap
 
-- Video export (MP4/GIF/PNG sequence) through an offscreen renderer
-- Effects (blur, glow, shadow), masks, blend modes
+- Video clip layers
+- Freehand drawing and editable vector paths
 - Graph editor for custom bezier easing
-- Parenting and grouping
-- Audio layers
 - Lottie and Alight Motion project import

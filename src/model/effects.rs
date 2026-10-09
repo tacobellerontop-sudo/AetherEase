@@ -30,10 +30,23 @@ pub enum EffectKind {
         /// Multiplies the halo's opacity; above 1 makes it denser.
         strength: Animated<f32>,
     },
+    /// Brightness, contrast, saturation and hue.
+    AdjustColor {
+        /// Added to every channel: -1 to 1.
+        brightness: Animated<f32>,
+        /// 1 leaves contrast alone; 0 is flat grey.
+        contrast: Animated<f32>,
+        /// 1 leaves colour alone; 0 is black and white.
+        saturation: Animated<f32>,
+        /// Hue rotation in degrees.
+        hue: Animated<f32>,
+    },
 }
 
 impl Effect {
-    pub const PRESETS: [&'static str; 3] = ["Blur", "Drop shadow", "Glow"];
+    pub const PRESETS: [&'static str; 4] = ["Blur", "Drop shadow", "Glow", "Adjust color"];
+    /// The index of "Adjust color" in [`Effect::PRESETS`].
+    pub const ADJUST_COLOR: usize = 3;
 
     /// A new effect by its index in [`Effect::PRESETS`].
     pub fn preset(index: usize) -> Effect {
@@ -47,10 +60,16 @@ impl Effect {
                 angle: Animated::new(90.0),
                 blur: Animated::new(16.0),
             },
-            _ => EffectKind::Glow {
+            2 => EffectKind::Glow {
                 color: Animated::new(Color::new(1.0, 0.85, 0.4, 1.0)),
                 radius: Animated::new(24.0),
                 strength: Animated::new(1.5),
+            },
+            _ => EffectKind::AdjustColor {
+                brightness: Animated::new(0.0),
+                contrast: Animated::new(1.0),
+                saturation: Animated::new(1.0),
+                hue: Animated::new(0.0),
             },
         };
         Effect {
@@ -64,6 +83,7 @@ impl Effect {
             EffectKind::Blur { .. } => "Blur",
             EffectKind::Shadow { .. } => "Drop shadow",
             EffectKind::Glow { .. } => "Glow",
+            EffectKind::AdjustColor { .. } => "Adjust color",
         }
     }
 
@@ -82,6 +102,12 @@ impl Effect {
                 radius,
                 strength,
             } => vec![color, radius, strength],
+            EffectKind::AdjustColor {
+                brightness,
+                contrast,
+                saturation,
+                hue,
+            } => vec![brightness, contrast, saturation, hue],
         }
     }
 
@@ -99,6 +125,12 @@ impl Effect {
                 radius,
                 strength,
             } => vec![color, radius, strength],
+            EffectKind::AdjustColor {
+                brightness,
+                contrast,
+                saturation,
+                hue,
+            } => vec![brightness, contrast, saturation, hue],
         }
     }
 }

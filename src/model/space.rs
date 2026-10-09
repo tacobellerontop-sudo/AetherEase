@@ -32,6 +32,24 @@ impl Vec3 {
     pub fn xy(self) -> Vec2 {
         vec2(self.x, self.y)
     }
+
+    pub fn dot(self, o: Vec3) -> f32 {
+        self.x * o.x + self.y * o.y + self.z * o.z
+    }
+
+    pub fn cross(self, o: Vec3) -> Vec3 {
+        vec3(
+            self.y * o.z - self.z * o.y,
+            self.z * o.x - self.x * o.z,
+            self.x * o.y - self.y * o.x,
+        )
+    }
+
+    /// The unit vector in the same direction (zero stays zero).
+    pub fn normalized(self) -> Vec3 {
+        let len = self.dot(self).sqrt();
+        if len > 0.0 { self * (1.0 / len) } else { self }
+    }
 }
 
 impl Add for Vec3 {
@@ -245,7 +263,7 @@ pub fn local_matrix(layer: &Layer, frame: f32) -> Affine3 {
     let t = &layer.transform;
     let p = t.position.sample(frame);
     let s = match layer.kind {
-        LayerKind::Camera { .. } => vec2(1.0, 1.0),
+        LayerKind::Camera { .. } | LayerKind::Light { .. } => vec2(1.0, 1.0),
         _ => t.scale.sample(frame),
     };
     let three_d = layer.is_3d();

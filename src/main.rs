@@ -8,6 +8,7 @@ mod audio;
 mod compose;
 mod export;
 mod history;
+mod light;
 mod model;
 mod path;
 mod recent;

@@ -15,6 +15,7 @@ use tiny_skia::{
     Pixmap, PixmapPaint, Point, RadialGradient, Shader, SpreadMode, Stroke, Transform,
 };
 
+use crate::light::{self, Light};
 use crate::model::{BlendMode, Color, EffectKind, FillStyle, Layer, LayerKind, Project};
 use crate::path::{self, Seg};
 use crate::render::{self, LayerGeom};
@@ -65,7 +66,8 @@ pub fn render(project: &Project, frame: i32, scale: f32, assets: &mut Assets) ->
     let w = ((project.width as f32 * scale).round() as u32).max(1);
     let h = ((project.height as f32 * scale).round() as u32).max(1);
     let mut layers = Pixmap::new(w, h).expect("non-zero size");
-    render_stack(&mut layers, project, None, frame, scale, assets);
+    let lights = light::lights_at(project, frame);
+    render_stack(&mut layers, project, None, frame, scale, &lights, assets);
     // The background goes underneath last, so a top-level mask reveals it
     // rather than cutting holes in it.
     let mut out = Pixmap::new(w, h).expect("non-zero size");
@@ -89,6 +91,7 @@ fn render_stack(
     group: Option<u64>,
     frame: i32,
     scale: f32,
+    lights: &[Light],
     assets: &mut Assets,
 ) {
     let (w, h) = (out.width(), out.height());
@@ -103,12 +106,19 @@ fn render_stack(
         if opacity <= 0.0 || (!is_group && !geom.in_front()) {
             continue;
         }
+        if matches!(layer.kind, LayerKind::Adjustment) {
+            adjust_below(out, layer, &geom, f, scale, opacity);
+            continue;
+        }
         let to_px = |p: Vec2| geom.local_to_canvas(p) * scale;
+        // A group's members are lit one by one as the group is drawn.
+        let lit = !lights.is_empty() && !is_group;
         let has_border = matches!(layer.kind, LayerKind::Shape { .. }) && layer.border.enabled;
         let has_effects = layer.effects.iter().any(|e| e.enabled);
         // A partly transparent layer with a border must be flattened first,
         // or the fill would show through the border.
         let direct = !is_group
+            && !lit
             && layer.blend == BlendMode::Normal
             && !has_effects
             && (opacity >= 1.0 || !has_border);
@@ -118,9 +128,20 @@ fn render_stack(
         }
         let mut image = Pixmap::new(w, h).expect("non-zero size");
         if is_group {
-            render_stack(&mut image, project, Some(layer.id), frame, scale, assets);
+            render_stack(
+                &mut image,
+                project,
+                Some(layer.id),
+                frame,
+                scale,
+                lights,
+                assets,
+            );
         } else {
             draw_layer(&mut image, layer, &geom, f, scale, 1.0, assets, &to_px);
+            if lit {
+                light::shade(&mut image, &geom, lights, scale);
+            }
         }
         // Effects work in layer pixels, so they grow and shrink with the
         // layer's scale and the zoom.
@@ -239,8 +260,12 @@ fn draw_layer(
                 }
             }
         }
-        LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group | LayerKind::Audio { .. } => {
-        }
+        LayerKind::Null
+        | LayerKind::Camera { .. }
+        | LayerKind::Light { .. }
+        | LayerKind::Adjustment
+        | LayerKind::Group
+        | LayerKind::Audio { .. } => {}
     }
 }
 
@@ -273,6 +298,109 @@ fn apply_effects(image: &mut Pixmap, layer: &Layer, frame: f32, px_per_unit: f32
                 scale_alpha(&mut glow, strength.sample(frame).max(0.0));
                 put_behind(image, &glow, Vec2::ZERO);
             }
+            EffectKind::AdjustColor {
+                brightness,
+                contrast,
+                saturation,
+                hue,
+            } => adjust_color(
+                image,
+                brightness.sample(frame),
+                contrast.sample(frame).max(0.0),
+                saturation.sample(frame).max(0.0),
+                hue.sample(frame),
+            ),
+        }
+    }
+}
+
+/// An adjustment layer: its effects run on everything already in `out`, and
+/// the result replaces `out` inside the layer's area, at its opacity.
+fn adjust_below(
+    out: &mut Pixmap,
+    layer: &Layer,
+    geom: &LayerGeom,
+    frame: f32,
+    scale: f32,
+    opacity: f32,
+) {
+    if !layer.effects.iter().any(|e| e.enabled) {
+        return;
+    }
+    let mut adjusted = out.clone();
+    apply_effects(&mut adjusted, layer, frame, geom.average_scale() * scale);
+    let mut area = Pixmap::new(out.width(), out.height()).expect("same size");
+    let mut pb = PathBuilder::new();
+    let corners = geom
+        .local_corners()
+        .map(|c| geom.local_to_canvas(c) * scale);
+    pb.move_to(corners[0].x, corners[0].y);
+    for c in &corners[1..] {
+        pb.line_to(c.x, c.y);
+    }
+    pb.close();
+    let Some(path) = pb.finish() else {
+        return;
+    };
+    let mut paint = Paint::default();
+    paint.set_color(tiny_skia::Color::WHITE);
+    paint.anti_alias = true;
+    area.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+    let pixels = out
+        .data_mut()
+        .chunks_exact_mut(4)
+        .zip(adjusted.data().chunks_exact(4))
+        .zip(area.data().chunks_exact(4));
+    for ((dst, adj), cover) in pixels {
+        let t = cover[3] as f32 / 255.0 * opacity;
+        if t <= 0.0 {
+            continue;
+        }
+        for (d, a) in dst.iter_mut().zip(adj) {
+            *d = (*d as f32 + (*a as f32 - *d as f32) * t).round() as u8;
+        }
+    }
+}
+
+/// Brightness, contrast, saturation and hue on premultiplied pixels.
+fn adjust_color(image: &mut Pixmap, brightness: f32, contrast: f32, saturation: f32, hue: f32) {
+    let (s, c) = hue.to_radians().sin_cos();
+    // Rotation about the grey axis, keeping luminance.
+    let hue_matrix = [
+        [
+            0.213 + c * 0.787 - s * 0.213,
+            0.715 - c * 0.715 - s * 0.715,
+            0.072 - c * 0.072 + s * 0.928,
+        ],
+        [
+            0.213 - c * 0.213 + s * 0.143,
+            0.715 + c * 0.285 + s * 0.140,
+            0.072 - c * 0.072 - s * 0.283,
+        ],
+        [
+            0.213 - c * 0.213 - s * 0.787,
+            0.715 - c * 0.715 + s * 0.715,
+            0.072 + c * 0.928 + s * 0.072,
+        ],
+    ];
+    for px in image.data_mut().chunks_exact_mut(4) {
+        let a = px[3] as f32 / 255.0;
+        if a <= 0.0 {
+            continue;
+        }
+        let rgb = [0, 1, 2].map(|i| px[i] as f32 / 255.0 / a);
+        let rotated = hue_matrix.map(|row| row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2]);
+        let luma = 0.2126 * rotated[0] + 0.7152 * rotated[1] + 0.0722 * rotated[2];
+        for (i, v) in rotated.into_iter().enumerate() {
+            let v = luma + (v - luma) * saturation;
+            let v = (v - 0.5) * contrast + 0.5 + brightness;
+            px[i] = (v.clamp(0.0, 1.0) * a * 255.0).round() as u8;
         }
     }
 }
@@ -612,7 +740,7 @@ pub fn to_color_image(pixmap: &Pixmap) -> egui::ColorImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ShapeKind;
+    use crate::model::{Animated, LightKind, ShapeKind};
 
     fn pixel(p: &Pixmap, x: u32, y: u32) -> [u8; 4] {
         let c = p.pixel(x, y).unwrap();
@@ -649,6 +777,62 @@ mod tests {
         project.layer_mut(above).unwrap().transform.z.value = 200.0;
         let out = render(&project, 0, 0.25, &mut Assets::default());
         assert_eq!(pixel(&out, 245, 140), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn lights_shade_layers_and_leave_unlit_places_dark() {
+        let mut project = Project {
+            background: Color::BLACK,
+            ..Project::default()
+        };
+        let solid = project.add_solid(0);
+        project.layer_mut(solid).unwrap().fill.value = Color::WHITE;
+        let unlit = render(&project, 0, 0.25, &mut Assets::default());
+        assert_eq!(pixel(&unlit, 240, 135), [255, 255, 255, 255]);
+
+        // A half-strength ambient light halves every pixel.
+        let ambient = project.add_light(LightKind::Ambient, 0);
+        project.layer_mut(ambient).unwrap().kind = LayerKind::Light {
+            light: LightKind::Ambient,
+            intensity: Animated::new(0.5),
+            cone: Animated::new(90.0),
+            feather: Animated::new(0.0),
+        };
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        assert_eq!(pixel(&out, 10, 10)[0], 128);
+
+        // A narrow spot in front of the centre lights the middle, not the edge.
+        project.remove_layer(ambient);
+        let spot = project.add_light(LightKind::Spot, 0);
+        if let LayerKind::Light { cone, .. } = &mut project.layer_mut(spot).unwrap().kind {
+            cone.value = 30.0;
+        }
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        assert!(pixel(&out, 240, 135)[0] > 200);
+        assert_eq!(pixel(&out, 10, 10)[0], 0);
+    }
+
+    #[test]
+    fn adjustment_layers_change_only_what_is_below() {
+        let mut project = Project {
+            background: Color::BLACK,
+            ..Project::default()
+        };
+        let below = project.add_solid(0);
+        project.layer_mut(below).unwrap().fill.value = Color::new(1.0, 0.0, 0.0, 1.0);
+        let adjust = project.add_adjustment(0);
+        if let EffectKind::AdjustColor { saturation, .. } =
+            &mut project.layer_mut(adjust).unwrap().effects[0].kind
+        {
+            saturation.value = 0.0;
+        }
+        let above = project.add_shape(ShapeKind::Rectangle, 0);
+        project.layer_mut(above).unwrap().fill.value = Color::new(0.0, 0.0, 1.0, 1.0);
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        // Red turned grey, the blue square on top kept its colour.
+        let [r, g, b, _] = pixel(&out, 10, 10);
+        assert!(r == g && g == b && r > 30, "got {r} {g} {b}");
+        assert_eq!(pixel(&out, 240, 135), [0, 0, 255, 255]);
     }
 
     #[test]

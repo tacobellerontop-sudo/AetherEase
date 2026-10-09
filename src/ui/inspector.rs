@@ -7,7 +7,7 @@ use crate::app::AetherApp;
 use crate::model::anim::Lerp;
 use crate::model::{
     Animated, BlendMode, Color, Easing, Effect, EffectKind, FillStyle, KeyTrack, Layer, LayerKind,
-    ShapeKind,
+    LightKind, ShapeKind,
 };
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme;
@@ -203,13 +203,17 @@ impl AetherApp {
         let has_content = layer.kind.is_visual();
         let is_group = matches!(layer.kind, LayerKind::Group);
         let is_audio = matches!(layer.kind, LayerKind::Audio { .. });
+        let is_light = matches!(layer.kind, LayerKind::Light { .. });
+        // Adjustment layers have no content of their own, only effects.
+        let has_own_content =
+            (has_content && !is_group && !matches!(layer.kind, LayerKind::Adjustment)) || is_light;
         let page_id = egui::Id::new("inspector_page");
         let mut page = ui
             .data(|d| d.get_temp::<Page>(page_id))
             .unwrap_or(Page::Transform);
         if (page == Page::Border && !is_shape)
-            || (matches!(page, Page::Content | Page::Fill | Page::Effects) && !has_content)
-            || (page == Page::Content && is_group)
+            || (matches!(page, Page::Fill | Page::Effects) && !has_content)
+            || (page == Page::Content && !has_own_content)
         {
             page = Page::Transform;
         }
@@ -222,7 +226,7 @@ impl AetherApp {
         } else {
             vec![(Page::Transform, Icon::Transform, "Move")]
         };
-        if has_content && !is_group {
+        if has_own_content {
             pages.push((
                 Page::Content,
                 theme::layer_icon(&layer.kind),
@@ -398,7 +402,16 @@ impl AetherApp {
                             .weak(),
                     );
                 }
-                LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Group => {}
+                LayerKind::Light {
+                    light,
+                    intensity,
+                    cone,
+                    feather,
+                } => light_section(ui, light, intensity, cone, feather, &mut layer.fill, frame),
+                LayerKind::Null
+                | LayerKind::Camera { .. }
+                | LayerKind::Group
+                | LayerKind::Adjustment => {}
             },
             Page::Fill => {
                 let is_image = !layer.kind.has_fill();
@@ -582,17 +595,24 @@ fn card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
 }
 
 fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
-    let camera = matches!(layer.kind, LayerKind::Camera { .. });
+    // Cameras and lights have a place and a direction but no size.
+    let camera = matches!(
+        layer.kind,
+        LayerKind::Camera { .. } | LayerKind::Light { .. }
+    );
+    let three_d = layer.is_3d();
     Grid::new("transform_grid").num_columns(3).show(ui, |ui| {
         let t = &mut layer.transform;
         anim_row(ui, "Position", &mut t.position, frame, |ui, v| {
             vec2_edit(ui, v, 1.0, " px")
         });
-        anim_row(ui, "Depth", &mut t.z, frame, |ui, v| {
-            ui.add(DragValue::new(v).speed(1.0).prefix("Z ").suffix(" px"))
-                .on_hover_text("Positive values move away from the camera")
-                .changed()
-        });
+        if three_d {
+            anim_row(ui, "Depth", &mut t.z, frame, |ui, v| {
+                ui.add(DragValue::new(v).speed(1.0).prefix("Z ").suffix(" px"))
+                    .on_hover_text("Positive values move away from the camera")
+                    .changed()
+            });
+        }
         if !camera {
             anim_row(ui, "Scale", &mut t.scale, frame, |ui, v| {
                 let mut percent = *v * 100.0;
@@ -603,9 +623,13 @@ fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
         }
         let degrees =
             |ui: &mut Ui, v: &mut f32| ui.add(DragValue::new(v).speed(0.5).suffix("°")).changed();
-        anim_row(ui, "Tilt X", &mut t.rotation_x, frame, degrees);
-        anim_row(ui, "Turn Y", &mut t.rotation_y, frame, degrees);
-        anim_row(ui, "Rotate Z", &mut t.rotation, frame, degrees);
+        if three_d {
+            anim_row(ui, "Tilt X", &mut t.rotation_x, frame, degrees);
+            anim_row(ui, "Turn Y", &mut t.rotation_y, frame, degrees);
+            anim_row(ui, "Rotate Z", &mut t.rotation, frame, degrees);
+        } else {
+            anim_row(ui, "Rotation", &mut t.rotation, frame, degrees);
+        }
         if let LayerKind::Camera { zoom } = &mut layer.kind {
             anim_row(ui, "Zoom", zoom, frame, |ui, v| {
                 ui.add(
@@ -617,6 +641,9 @@ fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
                 .on_hover_text("Distance at which a layer appears at 100%")
                 .changed()
             });
+            return;
+        }
+        if camera {
             return;
         }
 
@@ -687,6 +714,65 @@ fn shape_section(
     });
 }
 
+fn light_section(
+    ui: &mut Ui,
+    light: &mut LightKind,
+    intensity: &mut Animated<f32>,
+    cone: &mut Animated<f32>,
+    feather: &mut Animated<f32>,
+    color: &mut Animated<Color>,
+    frame: i32,
+) {
+    ui.horizontal_wrapped(|ui| {
+        for kind in LightKind::ALL {
+            ui.selectable_value(light, kind, kind.label());
+        }
+    });
+    ui.add_space(4.0);
+    Grid::new("light_grid").num_columns(3).show(ui, |ui| {
+        anim_row(ui, "Color", color, frame, color_edit);
+        anim_row(ui, "Intensity", intensity, frame, percent(0.0, 1000.0));
+        if *light == LightKind::Spot {
+            anim_row(ui, "Cone", cone, frame, |ui, v| {
+                ui.add(DragValue::new(v).range(1.0..=179.0).speed(0.5).suffix("°"))
+                    .changed()
+            });
+            anim_row(ui, "Feather", feather, frame, percent(0.0, 100.0));
+        }
+    });
+    ui.add_space(4.0);
+    let tip = match light {
+        LightKind::Ambient => "Lights every layer evenly.",
+        LightKind::Point => "Shines in all directions from where it is. Move it with Depth too.",
+        LightKind::Spot | LightKind::Parallel => {
+            "Points along its dashed line. Aim it with Tilt X and Turn Y on the Move page."
+        }
+    };
+    ui.label(RichText::new(tip).small().weak());
+    ui.label(
+        RichText::new("With any light in the scene, places no light reaches go dark.")
+            .small()
+            .weak(),
+    );
+}
+
+/// An editor for a 0-based factor shown as a percentage.
+fn percent(min: f32, max: f32) -> impl Fn(&mut Ui, &mut f32) -> bool {
+    move |ui, v| {
+        let mut p = *v * 100.0;
+        let changed = ui
+            .add(
+                DragValue::new(&mut p)
+                    .range(min..=max)
+                    .speed(1.0)
+                    .suffix("%"),
+            )
+            .changed();
+        *v = p / 100.0;
+        changed
+    }
+}
+
 fn effects_section(ui: &mut Ui, effects: &mut Vec<Effect>, frame: i32) {
     let mut remove = None;
     let mut swap = None;
@@ -752,6 +838,19 @@ fn effects_section(ui: &mut Ui, effects: &mut Vec<Effect>, frame: i32) {
                                     .changed();
                                 *v = percent / 100.0;
                                 changed
+                            });
+                        }
+                        EffectKind::AdjustColor {
+                            brightness,
+                            contrast,
+                            saturation,
+                            hue,
+                        } => {
+                            anim_row(ui, "Brightness", brightness, frame, percent(-100.0, 100.0));
+                            anim_row(ui, "Contrast", contrast, frame, percent(0.0, 300.0));
+                            anim_row(ui, "Saturation", saturation, frame, percent(0.0, 300.0));
+                            anim_row(ui, "Hue", hue, frame, |ui, v| {
+                                ui.add(DragValue::new(v).speed(1.0).suffix("°")).changed()
                             });
                         }
                     }

@@ -218,5 +218,25 @@ impl AetherApp {
                 self.add_camera();
             }
         });
+        ui.horizontal(|ui| {
+            if icons::tile(ui, Icon::Light, "Light", false, size)
+                .on_hover_text("Lights the layers; set point, spot, parallel or ambient")
+                .clicked()
+            {
+                self.add_light();
+            }
+            if icons::tile(ui, Icon::Adjustment, "Adjust", false, size)
+                .on_hover_text("An adjustment layer: its effects change everything below it")
+                .clicked()
+            {
+                self.add_adjustment();
+            }
+            if icons::tile(ui, Icon::Solid, "Solid", false, size)
+                .on_hover_text("A layer of colour the size of the canvas")
+                .clicked()
+            {
+                self.add_solid();
+            }
+        });
     }
 }

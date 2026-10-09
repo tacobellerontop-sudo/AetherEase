@@ -122,14 +122,63 @@ pub enum LayerKind {
         /// Distance in pixels at which a 3D layer appears at 100%.
         zoom: Animated<f32>,
     },
+    /// Lights the layers. Once a composition has a light, every layer is
+    /// shaded by its lights and is dark where none reach, as in After
+    /// Effects. The light's colour is the layer's `fill`.
+    Light {
+        light: LightKind,
+        /// 1.0 = 100%.
+        intensity: Animated<f32>,
+        /// Spot lights: the full width of the beam, in degrees.
+        cone: Animated<f32>,
+        /// Spot lights: how much of the beam's edge fades out, 0 to 1.
+        feather: Animated<f32>,
+    },
+    /// Applies its effects to everything below it in its stack, inside its
+    /// own area (the size of the canvas until moved or scaled).
+    Adjustment,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LightKind {
+    /// Shines in every direction from where it is.
+    Point,
+    /// A cone of light along the light's facing direction.
+    Spot,
+    /// Parallel rays, like sunlight, along the light's facing direction.
+    Parallel,
+    /// Lights everything evenly from no direction.
+    Ambient,
+}
+
+impl LightKind {
+    pub const ALL: [LightKind; 4] = [
+        LightKind::Point,
+        LightKind::Spot,
+        LightKind::Parallel,
+        LightKind::Ambient,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LightKind::Point => "Point",
+            LightKind::Spot => "Spot",
+            LightKind::Parallel => "Parallel",
+            LightKind::Ambient => "Ambient",
+        }
+    }
 }
 
 impl LayerKind {
-    /// Nulls and cameras only exist in the editor; they never render.
+    /// Nulls, cameras and lights only exist in the editor; they never
+    /// render themselves.
     pub fn is_visual(&self) -> bool {
         !matches!(
             self,
-            LayerKind::Null | LayerKind::Camera { .. } | LayerKind::Audio { .. }
+            LayerKind::Null
+                | LayerKind::Camera { .. }
+                | LayerKind::Light { .. }
+                | LayerKind::Audio { .. }
         )
     }
 
@@ -147,12 +196,17 @@ impl LayerKind {
             LayerKind::Group => "Group",
             LayerKind::Audio { .. } => "Audio",
             LayerKind::Camera { .. } => "Camera",
+            LayerKind::Light { .. } => "Light",
+            LayerKind::Adjustment => "Adjustment",
         }
     }
 }
 
 /// The side length of a null layer's on-canvas box, in layer pixels.
 pub const NULL_SIZE: f32 = 100.0;
+
+/// The side length of a light's on-canvas marker, in layer pixels.
+pub const LIGHT_SIZE: f32 = 70.0;
 
 /// Camera distance that shows the z = 0 plane at 100%, scaled to the canvas
 /// width the way a 50 mm lens is in After Effects.
@@ -353,6 +407,9 @@ pub enum PropId {
     RotationX,
     RotationY,
     CameraZoom,
+    LightIntensity,
+    ConeAngle,
+    ConeFeather,
     FillEnd,
     GradientAngle,
     /// Parameter `param` of the effect at `index` in the layer's list.
@@ -399,10 +456,11 @@ impl Layer {
     }
 
     /// Whether the layer is placed in 3D space. Like After Effects with every
-    /// layer's 3D switch on: all layers that can be seen live in 3D, flat on
-    /// z = 0 until given depth or tilt. Only audio has no place.
+    /// layer's 3D switch on: all layers live in 3D, flat on z = 0 until given
+    /// depth or tilt. Audio has no place, and adjustment layers stay flat over
+    /// the frame so they cover it whatever the camera does.
     pub fn is_3d(&self) -> bool {
-        !matches!(self.kind, LayerKind::Audio { .. })
+        !matches!(self.kind, LayerKind::Audio { .. } | LayerKind::Adjustment)
     }
 
     pub fn is_active_at(&self, frame: i32) -> bool {
@@ -418,7 +476,10 @@ impl Layer {
         if self.is_3d() {
             props.push(PropId::Depth);
         }
-        if !matches!(self.kind, LayerKind::Camera { .. }) {
+        if !matches!(
+            self.kind,
+            LayerKind::Camera { .. } | LayerKind::Light { .. }
+        ) {
             props.push(PropId::Scale);
         }
         props.push(PropId::Rotation);
@@ -431,7 +492,16 @@ impl Layer {
                 props.push(PropId::CameraZoom);
                 return props;
             }
-            LayerKind::Image { .. } | LayerKind::Group => props.push(PropId::Opacity),
+            LayerKind::Light { light, .. } => {
+                props.extend([PropId::Fill, PropId::LightIntensity]);
+                if *light == LightKind::Spot {
+                    props.extend([PropId::ConeAngle, PropId::ConeFeather]);
+                }
+                return props;
+            }
+            LayerKind::Image { .. } | LayerKind::Group | LayerKind::Adjustment => {
+                props.push(PropId::Opacity)
+            }
             LayerKind::Audio { .. } => {}
             LayerKind::Shape { .. } | LayerKind::Text { .. } => {
                 props.extend([PropId::Opacity, PropId::Fill]);
@@ -487,6 +557,18 @@ impl Layer {
                 LayerKind::Camera { zoom } => zoom,
                 _ => return None,
             },
+            PropId::LightIntensity => match &self.kind {
+                LayerKind::Light { intensity, .. } => intensity,
+                _ => return None,
+            },
+            PropId::ConeAngle => match &self.kind {
+                LayerKind::Light { cone, .. } => cone,
+                _ => return None,
+            },
+            PropId::ConeFeather => match &self.kind {
+                LayerKind::Light { feather, .. } => feather,
+                _ => return None,
+            },
             PropId::Size => match &self.kind {
                 LayerKind::Shape { size, .. } => size,
                 _ => return None,
@@ -522,6 +604,18 @@ impl Layer {
             PropId::RotationY => &mut self.transform.rotation_y,
             PropId::CameraZoom => match &mut self.kind {
                 LayerKind::Camera { zoom } => zoom,
+                _ => return None,
+            },
+            PropId::LightIntensity => match &mut self.kind {
+                LayerKind::Light { intensity, .. } => intensity,
+                _ => return None,
+            },
+            PropId::ConeAngle => match &mut self.kind {
+                LayerKind::Light { cone, .. } => cone,
+                _ => return None,
+            },
+            PropId::ConeFeather => match &mut self.kind {
+                LayerKind::Light { feather, .. } => feather,
                 _ => return None,
             },
             PropId::Size => match &mut self.kind {
@@ -788,6 +882,56 @@ impl Project {
         );
         layer.transform.z = Animated::new(-zoom);
         self.push(layer)
+    }
+
+    /// Adds a light in front of the canvas, shining onto it.
+    pub fn add_light(&mut self, light: LightKind, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let name = self.unique_name(&format!("{} light", light.label()));
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Light {
+                light,
+                intensity: Animated::new(1.0),
+                cone: Animated::new(90.0),
+                feather: Animated::new(0.5),
+            },
+            self.center(),
+            self.new_layer_frames(frame),
+        );
+        layer.fill = Animated::new(Color::new(1.0, 0.97, 0.9, 1.0));
+        layer.transform.z = Animated::new(-(self.width.min(self.height) as f32) * 0.5);
+        self.push(layer)
+    }
+
+    /// Adds an adjustment layer covering the canvas.
+    pub fn add_adjustment(&mut self, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let name = self.unique_name("Adjustment");
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Adjustment,
+            self.center(),
+            self.new_layer_frames(frame),
+        );
+        layer.effects.push(Effect::preset(Effect::ADJUST_COLOR));
+        self.push(layer)
+    }
+
+    /// Adds a solid: a rectangle of colour exactly the size of the canvas.
+    pub fn add_solid(&mut self, frame: i32) -> u64 {
+        let id = self.add_shape(ShapeKind::Rectangle, frame);
+        let size = vec2(self.width as f32, self.height as f32);
+        let name = self.unique_name("Solid");
+        let layer = self.layer_mut(id).expect("just added");
+        layer.name = name;
+        if let LayerKind::Shape { size: s, .. } = &mut layer.kind {
+            *s = Animated::new(size);
+        }
+        layer.fill = Animated::new(Color::new(0.16, 0.18, 0.24, 1.0));
+        id
     }
 
     /// Whether `ancestor` is `id` itself or one of its parents.
@@ -1097,6 +1241,15 @@ mod tests {
         let props = project.layer(cam).unwrap().props();
         assert!(props.contains(&PropId::CameraZoom));
         assert!(!props.contains(&PropId::Opacity));
+    }
+
+    #[test]
+    fn bundled_examples_load() {
+        for name in ["demo", "3d-demo", "lights-demo"] {
+            let path = format!("{}/examples/{name}.aether", env!("CARGO_MANIFEST_DIR"));
+            let json = std::fs::read_to_string(&path).unwrap();
+            Project::from_json(&json).unwrap_or_else(|e| panic!("{path}: {e}"));
+        }
     }
 
     #[test]
