@@ -1,0 +1,29 @@
+[package]
+name = "aetherease"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "AetherEase: a motion graphics editor for the desktop"
+publish = false
+
+[dependencies]
+ab_glyph = "0.2"
+eframe = "0.36"
+egui = { version = "0.36", features = ["serde"] }
+# The font egui ships with, so text renders the same on every machine.
+epaint_default_fonts = "0.36"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif"] }
+rfd = "0.17"
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "wav", "flac", "vorbis", "mp4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny-skia = "0.11"
+# Reads font names for the font picker.
+ttf-parser = "0.25"
+
+[profile.dev.package."*"]
+# Dependencies (image decoding, the renderer) are slow without optimisation.
+opt-level = 2
+
+[profile.release]
+lto = "thin"
