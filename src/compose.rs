@@ -205,8 +205,12 @@ fn draw_layer(
             let segs = path.sample(frame).segs();
             fill_and_stroke(target, layer, &segs, geom, frame, scale, opacity, to_px);
         }
-        LayerKind::Text { text, font_size } => {
-            let layout = text::layout(text, *font_size);
+        LayerKind::Text {
+            text,
+            font_size,
+            font,
+        } => {
+            let layout = text::layout(text, *font_size, font);
             let Some(path) = build_path(&layout.outline(), to_px) else {
                 return;
             };

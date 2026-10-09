@@ -89,6 +89,10 @@ grow into a real alternative to After Effects.
   (the same one export uses). Clips are 3D layers like everything else, keep
   their sound (with a volume control) in playback and export, and are
   trimmed by dragging their bar's edges.
+- **Fonts**: text layers can use any font installed on the computer. The
+  Text page has a searchable font list and a style picker (Thin to Black,
+  italics); projects keep the family and style by name, and fall back to the
+  built-in Ubuntu Light when a font is missing.
 - **Canvas editing**: click to select, drag to move, corner handles to scale
   (Shift for uniform), top handle to rotate (Shift snaps to 15°). Scroll to
   zoom, middle or right drag to pan.
@@ -150,6 +154,7 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/light.rs` | Light layers shading the layers they reach |
 | `src/model/vector.rs` | Editable vector paths: points, handles, morphing, freehand smoothing |
 | `src/video.rs` | Video clips: probing and frame decoding through ffmpeg |
+| `src/fonts.rs` | Finding the installed fonts and loading the one a text layer uses |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
 | `src/render.rs` | Layer geometry, paint order, hit testing, editor guides |

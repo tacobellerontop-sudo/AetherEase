@@ -18,6 +18,8 @@ rodio = { version = "0.22", default-features = false, features = ["playback", "m
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny-skia = "0.11"
+# Reads font names for the font picker.
+ttf-parser = "0.25"
 
 [profile.dev.package."*"]
 # Dependencies (image decoding, the renderer) are slow without optimisation.

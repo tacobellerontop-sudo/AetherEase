@@ -97,12 +97,12 @@ pub enum LayerKind {
     },
     /// A vector path drawn with the pen or freehand tool. Filled with the
     /// layer's fill and stroked with its border.
-    Path {
-        path: Animated<PathShape>,
-    },
+    Path { path: Animated<PathShape> },
     Text {
         text: String,
         font_size: f32,
+        #[serde(default, skip_serializing_if = "is_default")]
+        font: crate::fonts::FontChoice,
     },
     Image {
         path: PathBuf,
@@ -863,6 +863,7 @@ impl Project {
             LayerKind::Text {
                 text: text.to_owned(),
                 font_size,
+                font: Default::default(),
             },
             self.center(),
             self.new_layer_frames(frame),

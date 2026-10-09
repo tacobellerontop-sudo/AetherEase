@@ -4,6 +4,7 @@
 use egui::{Color32, CornerRadius, DragValue, Grid, RichText, Sense, Stroke, Ui, Vec2, vec2};
 
 use crate::app::AetherApp;
+use crate::fonts::{self, FontChoice};
 use crate::model::anim::Lerp;
 use crate::model::{
     Animated, BlendMode, Color, Easing, Effect, EffectKind, FillStyle, KeyTrack, Layer, LayerKind,
@@ -384,12 +385,17 @@ impl AetherApp {
                         ui.label(RichText::new(tip).small().weak());
                     }
                 }
-                LayerKind::Text { text, font_size } => {
+                LayerKind::Text {
+                    text,
+                    font_size,
+                    font,
+                } => {
                     ui.add(
                         egui::TextEdit::multiline(text)
                             .desired_rows(3)
                             .desired_width(f32::INFINITY),
                     );
+                    font_picker(ui, font);
                     ui.horizontal(|ui| {
                         ui.label("Font size");
                         ui.add(
@@ -779,6 +785,77 @@ fn shape_section(
             });
         }
     });
+}
+
+/// A searchable list of the installed fonts, then the chosen family's
+/// styles.
+fn font_picker(ui: &mut Ui, font: &mut FontChoice) {
+    let families = fonts::families();
+    ui.horizontal(|ui| {
+        ui.label("Font");
+        egui::ComboBox::from_id_salt("font_family")
+            .selected_text(if font.is_builtin() {
+                fonts::BUILTIN_NAME
+            } else {
+                font.family.as_str()
+            })
+            .width(200.0)
+            .height(360.0)
+            .show_ui(ui, |ui| {
+                let search_id = egui::Id::new("font_search");
+                let mut search: String = ui.data(|d| d.get_temp(search_id)).unwrap_or_default();
+                ui.add(
+                    egui::TextEdit::singleline(&mut search)
+                        .hint_text("Search fonts")
+                        .desired_width(f32::INFINITY),
+                )
+                .request_focus();
+                ui.data_mut(|d| d.insert_temp(search_id, search.clone()));
+                let needle = search.to_lowercase();
+                if needle.is_empty()
+                    && ui
+                        .selectable_label(font.is_builtin(), fonts::BUILTIN_NAME)
+                        .clicked()
+                {
+                    *font = FontChoice::default();
+                }
+                if families.is_empty() {
+                    ui.label(RichText::new("No installed fonts found.").weak());
+                }
+                for (family, styles) in families
+                    .iter()
+                    .filter(|(f, _)| f.to_lowercase().contains(&needle))
+                {
+                    if ui
+                        .selectable_label(font.family == *family, family)
+                        .clicked()
+                    {
+                        let style = styles
+                            .iter()
+                            .find(|s| *s == "Regular")
+                            .unwrap_or(&styles[0]);
+                        *font = FontChoice {
+                            family: family.clone(),
+                            style: style.clone(),
+                        };
+                    }
+                }
+            });
+    });
+    if let Some((_, styles)) = families.iter().find(|(f, _)| *f == font.family)
+        && styles.len() > 1
+    {
+        ui.horizontal(|ui| {
+            ui.label("Style");
+            egui::ComboBox::from_id_salt("font_style")
+                .selected_text(font.style.as_str())
+                .show_ui(ui, |ui| {
+                    for style in styles {
+                        ui.selectable_value(&mut font.style, style.clone(), style);
+                    }
+                });
+        });
+    }
 }
 
 fn light_section(

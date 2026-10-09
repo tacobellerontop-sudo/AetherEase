@@ -105,7 +105,11 @@ pub fn layer_geom(project: &Project, layer: &Layer, frame: f32) -> LayerGeom {
     let world = project.world_matrix(layer, frame);
     let (size, center) = match &layer.kind {
         LayerKind::Shape { size, .. } => (size.sample(frame), Vec2::ZERO),
-        LayerKind::Text { text, font_size } => (text::layout(text, *font_size).size, Vec2::ZERO),
+        LayerKind::Text {
+            text,
+            font_size,
+            font,
+        } => (text::layout(text, *font_size, font).size, Vec2::ZERO),
         LayerKind::Path { path } => path
             .sample(frame)
             .bounds()

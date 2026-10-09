@@ -7,6 +7,7 @@ mod app;
 mod audio;
 mod compose;
 mod export;
+mod fonts;
 mod history;
 mod light;
 mod model;
@@ -20,6 +21,7 @@ mod video;
 fn main() -> eframe::Result {
     // A project file can be passed on the command line (e.g. by "Open with").
     let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    fonts::scan_in_background();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AetherEase")
