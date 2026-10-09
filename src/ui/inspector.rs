@@ -175,16 +175,6 @@ impl AetherApp {
             if icons::toggle(ui, lock, "Lock / unlock", layer.locked).clicked() {
                 layer.locked = !layer.locked;
             }
-            if layer.kind.is_visual() || matches!(layer.kind, LayerKind::Null) {
-                let tip = if layer.three_d {
-                    "3D layer: turn off to make it flat"
-                } else {
-                    "Make this a 3D layer (depth, tilt, camera)"
-                };
-                if icons::toggle(ui, Icon::Cube, tip, layer.three_d).clicked() {
-                    layer.three_d = !layer.three_d;
-                }
-            }
             if matches!(layer.kind, LayerKind::Group) {
                 if icons::button(ui, Icon::Ungroup, "Ungroup (Ctrl+Shift+G)").clicked() {
                     action = Some(LayerAction::Ungroup);
@@ -592,20 +582,17 @@ fn card(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
 }
 
 fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
-    let three_d = layer.is_3d();
     let camera = matches!(layer.kind, LayerKind::Camera { .. });
     Grid::new("transform_grid").num_columns(3).show(ui, |ui| {
         let t = &mut layer.transform;
         anim_row(ui, "Position", &mut t.position, frame, |ui, v| {
             vec2_edit(ui, v, 1.0, " px")
         });
-        if three_d {
-            anim_row(ui, "Depth", &mut t.z, frame, |ui, v| {
-                ui.add(DragValue::new(v).speed(1.0).prefix("Z ").suffix(" px"))
-                    .on_hover_text("Positive values move away from the camera")
-                    .changed()
-            });
-        }
+        anim_row(ui, "Depth", &mut t.z, frame, |ui, v| {
+            ui.add(DragValue::new(v).speed(1.0).prefix("Z ").suffix(" px"))
+                .on_hover_text("Positive values move away from the camera")
+                .changed()
+        });
         if !camera {
             anim_row(ui, "Scale", &mut t.scale, frame, |ui, v| {
                 let mut percent = *v * 100.0;
@@ -616,13 +603,9 @@ fn transform_section(ui: &mut Ui, layer: &mut Layer, frame: i32) {
         }
         let degrees =
             |ui: &mut Ui, v: &mut f32| ui.add(DragValue::new(v).speed(0.5).suffix("°")).changed();
-        if three_d {
-            anim_row(ui, "Tilt X", &mut t.rotation_x, frame, degrees);
-            anim_row(ui, "Turn Y", &mut t.rotation_y, frame, degrees);
-            anim_row(ui, "Rotate Z", &mut t.rotation, frame, degrees);
-        } else {
-            anim_row(ui, "Rotation", &mut t.rotation, frame, degrees);
-        }
+        anim_row(ui, "Tilt X", &mut t.rotation_x, frame, degrees);
+        anim_row(ui, "Turn Y", &mut t.rotation_y, frame, degrees);
+        anim_row(ui, "Rotate Z", &mut t.rotation, frame, degrees);
         if let LayerKind::Camera { zoom } = &mut layer.kind {
             anim_row(ui, "Zoom", zoom, frame, |ui, v| {
                 ui.add(

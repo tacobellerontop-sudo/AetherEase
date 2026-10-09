@@ -58,8 +58,10 @@ grow into a real alternative to After Effects.
   the output) that other layers can be parented to.
 - **Parenting**: pick a Parent on the Move page and the layer follows that
   layer's position, scale and rotation. Parenting keeps the layer where it is.
-- **3D layers**: the cube button on any layer adds Depth (Z), Tilt X and
-  Turn Y. 3D layers are drawn in perspective and sorted by distance, so
+- **Everything is 3D**: like After Effects with every 3D switch on, each
+  layer has Depth (Z), Tilt X, Turn Y and Rotate Z, and starts flat on z = 0,
+  where it looks exactly like 2D. Layers are drawn in perspective; layers on
+  the same plane keep their stack order, and depth decides the rest, so
   nearer layers cover farther ones. Add a **Camera** layer to move, turn and
   zoom the view; parent it to a null to orbit. Without one, depth 0 looks
   exactly like 2D. See `examples/3d-demo.aether`.

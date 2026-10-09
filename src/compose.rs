@@ -208,14 +208,22 @@ fn draw_layer(
             // Image pixels to layer-local pixels (centred).
             let img = vec2(image.width() as f32, image.height() as f32);
             let to_local = |p: Vec2| p / img * *size - *size * 0.5;
-            if layer.is_3d() {
-                draw_image_perspective(target, &image, img, opacity, &|p| to_px(to_local(p)));
-            } else {
-                let t = affine_through(
-                    [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)],
-                    [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)].map(|p| to_px(to_local(p))),
-                );
-                if let Some(t) = t {
+            let corners = [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)];
+            let flat = affine_through(corners, corners.map(|p| to_px(to_local(p))));
+            // An image facing the camera squarely (the usual case, flat on
+            // z = 0) maps affinely: draw it in one go. Anything tilted goes
+            // through the perspective grid.
+            let facing = flat.filter(|t| {
+                let mut far = [tiny_skia::Point::from_xy(img.x, img.y)];
+                t.map_points(&mut far);
+                let want = to_px(to_local(img));
+                (far[0].x - want.x).abs() < 0.05 && (far[0].y - want.y).abs() < 0.05
+            });
+            match facing {
+                None => {
+                    draw_image_perspective(target, &image, img, opacity, &|p| to_px(to_local(p)))
+                }
+                Some(t) => {
                     target.draw_pixmap(
                         0,
                         0,
@@ -623,6 +631,24 @@ mod tests {
         assert_eq!((out.width(), out.height()), (480, 270));
         assert_eq!(pixel(&out, 240, 135), [255, 0, 0, 255]);
         assert_eq!(pixel(&out, 5, 5), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn flat_3d_layers_keep_stack_order_until_given_depth() {
+        let mut project = Project::default();
+        let below = project.add_shape(ShapeKind::Rectangle, 0);
+        project.layer_mut(below).unwrap().fill.value = Color::new(1.0, 0.0, 0.0, 1.0);
+        // Off-centre, so a distance sort would put it behind.
+        project.layer_mut(below).unwrap().transform.position.value += vec2(40.0, 30.0);
+        let above = project.add_shape(ShapeKind::Rectangle, 0);
+        project.layer_mut(above).unwrap().fill.value = Color::new(0.0, 0.0, 1.0, 1.0);
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        assert_eq!(pixel(&out, 245, 140), [0, 0, 255, 255]);
+
+        // Pushing the top layer back puts the other one in front.
+        project.layer_mut(above).unwrap().transform.z.value = 200.0;
+        let out = render(&project, 0, 0.25, &mut Assets::default());
+        assert_eq!(pixel(&out, 245, 140), [255, 0, 0, 255]);
     }
 
     #[test]

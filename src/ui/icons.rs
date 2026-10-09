@@ -46,7 +46,6 @@ pub enum Icon {
     Timing,
     Null,
     Camera,
-    Cube,
     Link,
     Effects,
     Group,
@@ -305,13 +304,6 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             ));
             painter.circle_stroke(p(-0.35, -0.55), 0.18 * s, stroke);
             painter.circle_stroke(p(0.0, -0.55), 0.18 * s, stroke);
-        }
-        Icon::Cube => {
-            let front = [p(-0.55, -0.25), p(0.25, -0.25), p(0.25, 0.6), p(-0.55, 0.6)];
-            let d = vec2(0.3 * s, -0.3 * s);
-            painter.add(Shape::closed_line(front.to_vec(), stroke));
-            line(&[front[0], front[0] + d, front[1] + d, front[1]]);
-            line(&[front[1] + d, front[2] + d, front[2]]);
         }
         Icon::Effects => {
             // A big and a small sparkle.

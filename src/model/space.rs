@@ -341,7 +341,7 @@ impl Project {
     }
 
     pub fn projection_for(&self, layer: &Layer, frame: i32) -> Projection {
-        if layer.three_d {
+        if layer.is_3d() {
             self.camera_projection(frame)
         } else {
             Projection::Flat
@@ -432,7 +432,6 @@ mod tests {
         let mut project = Project::default();
         let id = project.add_shape(ShapeKind::Rectangle, 0);
         let layer = project.layer_mut(id).unwrap();
-        layer.three_d = true;
         layer.transform.rotation_y.value = 40.0;
         layer.transform.z.value = 250.0;
         let layer = project.layer(id).unwrap();

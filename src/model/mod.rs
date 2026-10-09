@@ -335,9 +335,6 @@ pub struct Layer {
     /// The group layer this layer belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<u64>,
-    /// Whether the layer lives in 3D space (depth, X/Y rotation, camera).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub three_d: bool,
 }
 
 /// Identifies one animatable property of a layer.
@@ -398,13 +395,14 @@ impl Layer {
             },
             parent: None,
             group: None,
-            three_d: false,
         }
     }
 
-    /// Whether the layer is placed in 3D space. Cameras always are.
+    /// Whether the layer is placed in 3D space. Like After Effects with every
+    /// layer's 3D switch on: all layers that can be seen live in 3D, flat on
+    /// z = 0 until given depth or tilt. Only audio has no place.
     pub fn is_3d(&self) -> bool {
-        self.three_d || matches!(self.kind, LayerKind::Camera { .. })
+        !matches!(self.kind, LayerKind::Audio { .. })
     }
 
     pub fn is_active_at(&self, frame: i32) -> bool {
@@ -1088,13 +1086,13 @@ mod tests {
     }
 
     #[test]
-    fn three_d_props_appear_only_on_3d_layers() {
+    fn every_visual_layer_is_3d() {
         let mut project = Project::default();
         let id = project.add_shape(ShapeKind::Rectangle, 0);
-        let layer = project.layer_mut(id).unwrap();
-        assert!(!layer.props().contains(&PropId::Depth));
-        layer.three_d = true;
+        let layer = project.layer(id).unwrap();
+        assert!(layer.props().contains(&PropId::Depth));
         assert!(layer.props().contains(&PropId::RotationY));
+        assert_eq!(layer.transform.z.value, 0.0);
         let cam = project.add_camera(0);
         let props = project.layer(cam).unwrap().props();
         assert!(props.contains(&PropId::CameraZoom));

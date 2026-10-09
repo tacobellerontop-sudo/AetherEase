@@ -216,8 +216,10 @@ pub fn stack<'a>(project: &'a Project, group: Option<u64>, frame: i32) -> Vec<&'
         .members(group)
         .filter(|l| l.is_active_at(frame) && !matches!(l.kind, LayerKind::Camera { .. }))
     {
-        if layer.three_d {
-            let depth = layer_geom(project, layer, frame as f32).depth();
+        if layer.is_3d() {
+            // Rounded so layers sharing a plane keep their stack order rather
+            // than being shuffled by rounding noise.
+            let depth = (layer_geom(project, layer, frame as f32).depth() * 1000.0).round();
             run.push((depth, layer));
         } else {
             flush(&mut run, &mut out);
