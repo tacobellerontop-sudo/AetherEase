@@ -55,6 +55,7 @@ pub enum Icon {
     Light,
     Adjustment,
     Solid,
+    Video,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -245,6 +246,16 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 p(0.6, 0.35),
             ]);
             painter.circle_filled(p(0.25, -0.25), 0.1 * s, color);
+        }
+        Icon::Video => {
+            // A screen with a play triangle.
+            let r = Rect::from_center_size(c, vec2(1.4 * s, 1.05 * s));
+            painter.rect_stroke(r, CornerRadius::same(3), stroke, StrokeKind::Middle);
+            painter.add(Shape::convex_polygon(
+                vec![p(-0.15, -0.25), p(0.3, 0.0), p(-0.15, 0.25)],
+                color,
+                Stroke::NONE,
+            ));
         }
         Icon::Transform => {
             line(&[p(-0.6, 0.0), p(0.6, 0.0)]);

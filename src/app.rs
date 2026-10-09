@@ -11,6 +11,7 @@ use crate::model::{LayerKind, LightKind, Project, ProjectSettings, ShapeKind};
 use crate::recent::{self, RecentEntry, RecentProjects};
 use crate::ui::export_dialog::ExportDialog;
 use crate::ui::{theme, timeline::TimelineState, viewport::ViewportState};
+use crate::video;
 
 pub const PROJECT_EXTENSION: &str = "aether";
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
@@ -527,6 +528,26 @@ impl AetherApp {
             self.audio.play_from(&self.project, self.frame);
         }
         self.audio_dirty = false;
+    }
+
+    pub fn import_video(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Video", &video::EXTENSIONS)
+            .pick_file()
+        else {
+            return;
+        };
+        match video::probe(&path) {
+            Ok(info) => {
+                if info.has_audio {
+                    // Ready the sound now rather than on first play.
+                    video::audio_track(&path);
+                }
+                let id = self.project.add_video(path, info, self.frame);
+                self.select(Some(id));
+            }
+            Err(err) => self.status = Some(format!("Couldn't import {}: {err}", path.display())),
+        }
     }
 
     pub fn import_audio(&mut self) {

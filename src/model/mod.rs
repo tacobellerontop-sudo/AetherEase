@@ -102,6 +102,21 @@ pub enum LayerKind {
         /// Pixel size of the image when it was imported.
         size: Vec2,
     },
+    /// A video clip. Frame `start` is where the clip's first frame sits;
+    /// the layer's in and out points trim it.
+    Video {
+        path: PathBuf,
+        /// Pixel size of the video.
+        size: Vec2,
+        start: i32,
+        /// The clip's own frames per second.
+        rate: f32,
+        seconds: f32,
+        /// Whether the file has a sound track, played with the picture.
+        has_audio: bool,
+        /// Gain of its sound, 1.0 = as recorded.
+        volume: f32,
+    },
     /// A sound file, played from frame `start` (where the file's time zero
     /// sits; the layer's in point can trim its head).
     Audio {
@@ -192,6 +207,7 @@ impl LayerKind {
             LayerKind::Shape { .. } => "Shape",
             LayerKind::Text { .. } => "Text",
             LayerKind::Image { .. } => "Image",
+            LayerKind::Video { .. } => "Video",
             LayerKind::Null => "Null",
             LayerKind::Group => "Group",
             LayerKind::Audio { .. } => "Audio",
@@ -463,6 +479,26 @@ impl Layer {
         !matches!(self.kind, LayerKind::Audio { .. } | LayerKind::Adjustment)
     }
 
+    /// The sound this layer plays, if any: the file, the frame its time
+    /// zero sits on, and its gain. Audio layers and videos with sound have one.
+    pub fn sound(&self) -> Option<(&std::path::Path, i32, f32)> {
+        match &self.kind {
+            LayerKind::Audio {
+                path,
+                start,
+                volume,
+            } => Some((path, *start, *volume)),
+            LayerKind::Video {
+                path,
+                start,
+                volume,
+                has_audio: true,
+                ..
+            } => Some((path, *start, *volume)),
+            _ => None,
+        }
+    }
+
     pub fn is_active_at(&self, frame: i32) -> bool {
         self.visible && frame >= self.in_frame && frame < self.out_frame
     }
@@ -499,9 +535,10 @@ impl Layer {
                 }
                 return props;
             }
-            LayerKind::Image { .. } | LayerKind::Group | LayerKind::Adjustment => {
-                props.push(PropId::Opacity)
-            }
+            LayerKind::Image { .. }
+            | LayerKind::Video { .. }
+            | LayerKind::Group
+            | LayerKind::Adjustment => props.push(PropId::Opacity),
             LayerKind::Audio { .. } => {}
             LayerKind::Shape { .. } | LayerKind::Text { .. } => {
                 props.extend([PropId::Opacity, PropId::Fill]);
@@ -690,7 +727,7 @@ impl Layer {
     pub fn shift_in_time(&mut self, delta: i32) {
         self.in_frame += delta;
         self.out_frame += delta;
-        if let LayerKind::Audio { start, .. } = &mut self.kind {
+        if let LayerKind::Audio { start, .. } | LayerKind::Video { start, .. } = &mut self.kind {
             *start += delta;
         }
         for prop in self.props() {
@@ -823,6 +860,39 @@ impl Project {
             },
             self.center(),
             self.new_layer_frames(frame),
+        );
+        layer.transform.scale = Animated::new(vec2(fit, fit));
+        self.push(layer)
+    }
+
+    /// Adds a video clip starting at `frame`, fitted inside the canvas.
+    pub fn add_video(&mut self, path: PathBuf, info: crate::video::VideoInfo, frame: i32) -> u64 {
+        let id = self.alloc_id();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Video".into());
+        let name = self.unique_name(&stem);
+        let size = vec2(info.width as f32, info.height as f32);
+        let fit = (self.width as f32 / size.x)
+            .min(self.height as f32 / size.y)
+            .min(1.0);
+        let start = frame.max(0);
+        let length = ((info.seconds * self.fps as f32).round() as i32).max(1);
+        let mut layer = Layer::base(
+            id,
+            name,
+            LayerKind::Video {
+                path,
+                size,
+                start,
+                rate: info.rate,
+                seconds: info.seconds,
+                has_audio: info.has_audio,
+                volume: 1.0,
+            },
+            self.center(),
+            (start, start + length),
         );
         layer.transform.scale = Animated::new(vec2(fit, fit));
         self.push(layer)

@@ -76,6 +76,10 @@ grow into a real alternative to After Effects.
   stack, inside their area (the whole frame by default). They stay flat over
   the frame whatever the camera does.
 - **Solids**: a layer of colour the size of the canvas.
+- **Video clips**: MP4, MOV, MKV, WebM, AVI and GIF, decoded through ffmpeg
+  (the same one export uses). Clips are 3D layers like everything else, keep
+  their sound (with a volume control) in playback and export, and are
+  trimmed by dragging their bar's edges.
 - **Canvas editing**: click to select, drag to move, corner handles to scale
   (Shift for uniform), top handle to rotate (Shift snaps to 15°). Scroll to
   zoom, middle or right drag to pan.
@@ -135,6 +139,7 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/export.rs` | MP4 (via ffmpeg), GIF and PNG export on a background thread |
 | `src/compose.rs` | The tiny-skia compositor: fills, gradients, images, blending, effects, adjustment layers |
 | `src/light.rs` | Light layers shading the layers they reach |
+| `src/video.rs` | Video clips: probing and frame decoding through ffmpeg |
 | `src/text.rs`, `src/path.rs` | Text layout and glyph outlines; vector path segments |
 | `src/model/mod.rs` | `Project`, `Layer`, layer kinds, JSON save format |
 | `src/render.rs` | Layer geometry, paint order, hit testing, editor guides |
@@ -148,7 +153,6 @@ preview, thumbnails and export all come from the same tiny-skia compositor.
 
 ## Roadmap
 
-- Video clip layers
 - Freehand drawing and editable vector paths
 - Graph editor for custom bezier easing
 - Lottie and Alight Motion project import

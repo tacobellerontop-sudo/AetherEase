@@ -378,6 +378,47 @@ impl AetherApp {
                     ui.label(format!("{} × {} px", size.x, size.y));
                     ui.label(RichText::new(path.display().to_string()).small().weak());
                 }
+                LayerKind::Video {
+                    path,
+                    size,
+                    seconds,
+                    rate,
+                    has_audio,
+                    volume,
+                    ..
+                } => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    ui.label(RichText::new(name).strong());
+                    ui.label(format!(
+                        "{} × {} px · {:.1} s · {} fps",
+                        size.x,
+                        size.y,
+                        seconds,
+                        (*rate * 100.0).round() / 100.0
+                    ));
+                    ui.label(RichText::new(path.display().to_string()).small().weak());
+                    if *has_audio {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Volume");
+                            let mut percent = *volume * 100.0;
+                            if ui
+                                .add(egui::Slider::new(&mut percent, 0.0..=200.0).suffix("%"))
+                                .changed()
+                            {
+                                *volume = percent / 100.0;
+                            }
+                        });
+                    }
+                    ui.label(
+                        RichText::new("Drag the bar's edges to trim the clip.")
+                            .small()
+                            .weak(),
+                    );
+                }
                 LayerKind::Audio { path, volume, .. } => {
                     let name = path
                         .file_name()

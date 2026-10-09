@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::compose::{self, Assets};
-use crate::model::{LayerKind, Project};
+use crate::model::Project;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -47,6 +47,20 @@ pub struct Settings {
     pub scale: f32,
 }
 
+/// A command running `program` without flashing a console window on
+/// Windows.
+pub fn quiet_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// The ffmpeg program to use, if one can be found.
 pub fn find_ffmpeg() -> Option<PathBuf> {
     let name = if cfg!(windows) {
@@ -60,7 +74,7 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
         .filter(|p| p.is_file());
     let candidates = beside_app.into_iter().chain([PathBuf::from(name)]);
     candidates.into_iter().find(|p| {
-        Command::new(p)
+        quiet_command(p)
             .arg("-version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -205,7 +219,7 @@ fn export_video(
     let probe = compose::render(project, 0, scale, &mut Assets::default());
     let (w, h) = (probe.width(), probe.height());
     let args = ffmpeg_args(project, w, h, out);
-    let mut child = Command::new(ffmpeg)
+    let mut child = quiet_command(ffmpeg)
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -272,13 +286,9 @@ pub fn ffmpeg_args(project: &Project, width: u32, height: u32, out: &Path) -> Ve
         .layers
         .iter()
         .filter(|l| project.is_shown_at(l, l.in_frame) && l.in_frame < project.duration)
-        .filter_map(|l| match &l.kind {
-            LayerKind::Audio {
-                path,
-                start,
-                volume,
-            } => Some((path, *start, *volume, l.in_frame.max(0), l.out_frame)),
-            _ => None,
+        .filter_map(|l| {
+            let (path, start, volume) = l.sound()?;
+            Some((path, start, volume, l.in_frame.max(0), l.out_frame))
         })
         .collect();
     let mut filters = Vec::new();

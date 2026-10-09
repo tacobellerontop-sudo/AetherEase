@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -37,13 +36,13 @@ impl AudioEngine {
             .layers
             .iter()
             .filter(|l| project.is_shown_at(l, l.in_frame) && l.out_frame > frame)
-            .filter_map(|l| match &l.kind {
-                LayerKind::Audio {
-                    path,
-                    start,
-                    volume,
-                } => Some((path.clone(), *start, *volume, l.in_frame, l.out_frame)),
-                _ => None,
+            .filter_map(|l| {
+                let (path, start, volume) = l.sound()?;
+                let path = match l.kind {
+                    LayerKind::Video { .. } => crate::video::audio_track(path)?,
+                    _ => path.to_owned(),
+                };
+                Some((path, start, volume, l.in_frame, l.out_frame))
             })
             .collect();
         if clips.is_empty() {
@@ -65,7 +64,7 @@ impl AudioEngine {
             let Ok(file) = File::open(&path) else {
                 continue;
             };
-            let Ok(decoder) = Decoder::try_from(BufReader::new(file)) else {
+            let Ok(decoder) = Decoder::try_from(file) else {
                 continue;
             };
             let from = frame.max(in_frame);
@@ -100,7 +99,7 @@ pub struct Waveform {
 /// Decodes a whole file into a [`Waveform`].
 pub fn analyse(path: &Path) -> Result<Waveform, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
-    let decoder = Decoder::try_from(BufReader::new(file)).map_err(|e| e.to_string())?;
+    let decoder = Decoder::try_from(file).map_err(|e| e.to_string())?;
     let channels = decoder.channels().get() as usize;
     let rate = decoder.sample_rate().get() as f32;
     let window = ((rate / PEAKS_PER_SECOND) as usize * channels).max(1);

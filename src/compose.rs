@@ -20,11 +20,13 @@ use crate::model::{BlendMode, Color, EffectKind, FillStyle, Layer, LayerKind, Pr
 use crate::path::{self, Seg};
 use crate::render::{self, LayerGeom};
 use crate::text;
+use crate::video::Videos;
 
 /// Decoded images, shared by every render.
 #[derive(Default)]
 pub struct Assets {
     images: HashMap<PathBuf, Option<Arc<Pixmap>>>,
+    videos: Videos,
 }
 
 impl Assets {
@@ -41,8 +43,22 @@ impl Assets {
             .clone()
     }
 
+    /// Frame `index` of a video clip; see [`Videos::frame`].
+    pub fn video_frame(
+        &mut self,
+        path: &Path,
+        index: i64,
+        rate: f32,
+        count: i64,
+        size: Vec2,
+    ) -> Option<Arc<Pixmap>> {
+        let (w, h) = (size.x.round() as u32, size.y.round() as u32);
+        self.videos.frame(path, index, rate, count, w, h)
+    }
+
     pub fn clear(&mut self) {
         self.images.clear();
+        self.videos.clear();
     }
 }
 
@@ -95,6 +111,7 @@ fn render_stack(
     assets: &mut Assets,
 ) {
     let (w, h) = (out.width(), out.height());
+    let fps = project.fps.max(1) as f32;
     for layer in render::stack(project, group, frame) {
         if !layer.kind.is_visual() {
             continue;
@@ -123,7 +140,7 @@ fn render_stack(
             && !has_effects
             && (opacity >= 1.0 || !has_border);
         if direct {
-            draw_layer(out, layer, &geom, f, scale, opacity, assets, &to_px);
+            draw_layer(out, layer, &geom, f, fps, scale, opacity, assets, &to_px);
             continue;
         }
         let mut image = Pixmap::new(w, h).expect("non-zero size");
@@ -138,7 +155,7 @@ fn render_stack(
                 assets,
             );
         } else {
-            draw_layer(&mut image, layer, &geom, f, scale, 1.0, assets, &to_px);
+            draw_layer(&mut image, layer, &geom, f, fps, scale, 1.0, assets, &to_px);
             if lit {
                 light::shade(&mut image, &geom, lights, scale);
             }
@@ -167,6 +184,7 @@ fn draw_layer(
     layer: &Layer,
     geom: &LayerGeom,
     frame: f32,
+    fps: f32,
     scale: f32,
     opacity: f32,
     assets: &mut Assets,
@@ -221,43 +239,23 @@ fn draw_layer(
                 None,
             );
         }
-        LayerKind::Image { path, size } => {
-            let Some(image) = assets.image(path) else {
-                draw_missing(target, geom, to_px);
-                return;
-            };
-            // Image pixels to layer-local pixels (centred).
-            let img = vec2(image.width() as f32, image.height() as f32);
-            let to_local = |p: Vec2| p / img * *size - *size * 0.5;
-            let corners = [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)];
-            let flat = affine_through(corners, corners.map(|p| to_px(to_local(p))));
-            // An image facing the camera squarely (the usual case, flat on
-            // z = 0) maps affinely: draw it in one go. Anything tilted goes
-            // through the perspective grid.
-            let facing = flat.filter(|t| {
-                let mut far = [tiny_skia::Point::from_xy(img.x, img.y)];
-                t.map_points(&mut far);
-                let want = to_px(to_local(img));
-                (far[0].x - want.x).abs() < 0.05 && (far[0].y - want.y).abs() < 0.05
-            });
-            match facing {
-                None => {
-                    draw_image_perspective(target, &image, img, opacity, &|p| to_px(to_local(p)))
-                }
-                Some(t) => {
-                    target.draw_pixmap(
-                        0,
-                        0,
-                        Pixmap::as_ref(&image),
-                        &PixmapPaint {
-                            opacity,
-                            blend_mode: tiny_skia::BlendMode::SourceOver,
-                            quality: FilterQuality::Bilinear,
-                        },
-                        t,
-                        None,
-                    );
-                }
+        LayerKind::Image { path, size } => match assets.image(path) {
+            Some(image) => draw_bitmap(target, &image, *size, opacity, to_px),
+            None => draw_missing(target, geom, to_px),
+        },
+        LayerKind::Video {
+            path,
+            size,
+            start,
+            rate,
+            seconds,
+            ..
+        } => {
+            let index = ((frame - *start as f32) / fps * rate).floor() as i64;
+            let count = (seconds * rate).floor() as i64;
+            match assets.video_frame(path, index, *rate, count, *size) {
+                Some(image) => draw_bitmap(target, &image, *size, opacity, to_px),
+                None => draw_missing(target, geom, to_px),
             }
         }
         LayerKind::Null
@@ -266,6 +264,45 @@ fn draw_layer(
         | LayerKind::Adjustment
         | LayerKind::Group
         | LayerKind::Audio { .. } => {}
+    }
+}
+
+/// Draws `image` stretched over a `size` layer centred on its origin.
+fn draw_bitmap(
+    target: &mut Pixmap,
+    image: &Pixmap,
+    size: Vec2,
+    opacity: f32,
+    to_px: &dyn Fn(Vec2) -> Vec2,
+) {
+    // Image pixels to layer-local pixels (centred).
+    let img = vec2(image.width() as f32, image.height() as f32);
+    let to_local = |p: Vec2| p / img * size - size * 0.5;
+    let corners = [Vec2::ZERO, vec2(img.x, 0.0), vec2(0.0, img.y)];
+    let flat = affine_through(corners, corners.map(|p| to_px(to_local(p))));
+    // An image facing the camera squarely (the usual case, flat on z = 0)
+    // maps affinely: draw it in one go. Anything tilted goes through the
+    // perspective grid.
+    let facing = flat.filter(|t| {
+        let mut far = [tiny_skia::Point::from_xy(img.x, img.y)];
+        t.map_points(&mut far);
+        let want = to_px(to_local(img));
+        (far[0].x - want.x).abs() < 0.05 && (far[0].y - want.y).abs() < 0.05
+    });
+    match facing {
+        None => draw_image_perspective(target, image, img, opacity, &|p| to_px(to_local(p))),
+        Some(t) => target.draw_pixmap(
+            0,
+            0,
+            image.as_ref(),
+            &PixmapPaint {
+                opacity,
+                blend_mode: tiny_skia::BlendMode::SourceOver,
+                quality: FilterQuality::Bilinear,
+            },
+            t,
+            None,
+        ),
     }
 }
 

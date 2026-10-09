@@ -15,6 +15,7 @@ mod recent;
 mod render;
 mod text;
 mod ui;
+mod video;
 
 fn main() -> eframe::Result {
     // A project file can be passed on the command line (e.g. by "Open with").

@@ -197,6 +197,12 @@ impl AetherApp {
             if icons::tile(ui, Icon::Image, "Image", false, size).clicked() {
                 self.import_image();
             }
+            if icons::tile(ui, Icon::Video, "Video", false, size)
+                .on_hover_text("A video clip (needs ffmpeg)")
+                .clicked()
+            {
+                self.import_video();
+            }
         });
         ui.horizontal(|ui| {
             if icons::tile(ui, Icon::Null, "Null", false, size)
