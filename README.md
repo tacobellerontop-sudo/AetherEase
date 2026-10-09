@@ -101,8 +101,8 @@ grow into a real alternative to After Effects.
   has keys, editing it at another frame adds a key there automatically.
   Easing per key: linear, ease in, ease out, ease in & out, hold, or a
   custom curve. Properties and easing are edited only in the sidebar.
-- **Graph editor**: select a keyframe to see its easing curve in the
-  sidebar. Drag the two handles to shape a custom curve (handles can go
+- **Graph editor**: select a keyframe, then press the graph button on the
+  timeline bar or Graph editor on the keyframe card. Drag the two handles to shape a custom curve (handles can go
   above or below the square for overshoot and anticipation), or start from a
   named curve such as Smooth, Snappy, Expo out or Back in & out. Hover the
   graph to watch the motion play.

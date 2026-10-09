@@ -59,6 +59,7 @@ pub enum Icon {
     Pen,
     Brush,
     Pointer,
+    Graph,
 }
 
 /// Paints `icon` centred in `rect`.
@@ -295,6 +296,22 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 color,
                 Stroke::NONE,
             ));
+        }
+        Icon::Graph => {
+            // An easing curve with its two handles.
+            let (a, b) = (p(-0.65, 0.6), p(0.65, -0.6));
+            let (h1, h2) = (p(0.15, 0.6), p(-0.15, -0.6));
+            painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
+                [a, h1, h2, b],
+                false,
+                Color32::TRANSPARENT,
+                stroke,
+            ));
+            let thin = Stroke::new(w * 0.6, color);
+            painter.line_segment([a, h1], thin);
+            painter.line_segment([b, h2], thin);
+            painter.circle_filled(h1, w * 1.3, color);
+            painter.circle_filled(h2, w * 1.3, color);
         }
         Icon::Transform => {
             line(&[p(-0.6, 0.0), p(0.6, 0.0)]);

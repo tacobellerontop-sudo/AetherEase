@@ -1,10 +1,148 @@
 //! The graph editor: the easing curve between two keyframes, with handles
 //! to drag into a custom curve.
 
-use egui::{Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2, pos2, vec2};
+use egui::{
+    Color32, Context, CornerRadius, Id, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, Ui,
+    Vec2, pos2, vec2,
+};
 
+use super::icons::{self, Icon};
 use super::theme;
+use super::timeline::timecode;
+use crate::app::AetherApp;
 use crate::model::anim::{Bezier, Easing};
+
+/// The button that opens and closes the graph editor.
+pub fn open_button(ui: &mut Ui, open: bool) -> Response {
+    let label = if open {
+        "Close graph editor"
+    } else {
+        "Graph editor"
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let fill = if open {
+        theme::ACCENT_SOFT
+    } else if response.hovered() {
+        ui.visuals().widgets.hovered.weak_bg_fill
+    } else {
+        ui.visuals().widgets.inactive.weak_bg_fill
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    let color = if open {
+        Color32::WHITE
+    } else {
+        ui.visuals().strong_text_color()
+    };
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), egui::FontId::proportional(14.0), color);
+    let width = 18.0 + 8.0 + galley.size().x;
+    let left = rect.center().x - width / 2.0;
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(pos2(left + 9.0, rect.center().y), Vec2::splat(18.0)),
+        Icon::Graph,
+        color,
+    );
+    ui.painter().galley(
+        pos2(left + 26.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Shape the easing curve between keyframes")
+}
+
+impl AetherApp {
+    /// The graph editor window, for the keyframe selected on the timeline.
+    pub fn graph_window(&mut self, ctx: &Context) {
+        if !self.timeline.graph_open {
+            return;
+        }
+        let mut open = true;
+        let fps = self.project.fps;
+        let key = self.selected_key;
+        let screen = ctx.content_rect();
+        egui::Window::new(RichText::new("Graph editor").strong())
+            .id(Id::new("graph_editor"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_pos(pos2(screen.right() - 780.0, 70.0))
+            .show(ctx, |ui| {
+                ui.set_width(400.0);
+                let Some(key) = key else {
+                    ui.add_space(8.0);
+                    ui.label("Select a keyframe on the timeline to shape its easing.");
+                    ui.add_space(8.0);
+                    return;
+                };
+                let Some(layer) = self.project.layer_mut(key.layer) else {
+                    return;
+                };
+                let Some(mut easing) = layer.easing_at(key.frame) else {
+                    return;
+                };
+                let next = layer
+                    .all_key_frames()
+                    .into_iter()
+                    .filter(|&f| f > key.frame)
+                    .min();
+                let span = match next {
+                    Some(next) => format!(
+                        "{}, from {} to {}",
+                        layer.name,
+                        timecode(key.frame, fps),
+                        timecode(next, fps)
+                    ),
+                    None => format!(
+                        "{}, {}: the last keyframe, so there is nothing to ease into yet",
+                        layer.name,
+                        timecode(key.frame, fps)
+                    ),
+                };
+                ui.label(RichText::new(span).weak());
+                ui.add_space(4.0);
+                easing_editor(ui, &mut easing);
+                layer.set_easing_at(key.frame, easing);
+            });
+        if !open {
+            self.timeline.graph_open = false;
+        }
+    }
+}
+
+/// Presets, the graph and named curves for one keyframe's easing.
+pub fn easing_editor(ui: &mut Ui, easing: &mut Easing) {
+    ui.horizontal_wrapped(|ui| {
+        for e in Easing::ALL {
+            ui.selectable_value(easing, e, e.label());
+        }
+        if matches!(easing, Easing::Custom(_)) {
+            let _ = ui.selectable_label(true, "Custom");
+        }
+    });
+    ui.add_space(4.0);
+    easing_graph(ui, easing);
+    if let Easing::Custom(c) = *easing {
+        ui.label(
+            RichText::new(format!(
+                "cubic-bezier({:.2}, {:.2}, {:.2}, {:.2})",
+                c.x1, c.y1, c.x2, c.y2
+            ))
+            .monospace()
+            .weak(),
+        );
+    } else {
+        ui.label(RichText::new("Drag the handles to shape your own curve").weak());
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (name, curve) in Bezier::PRESETS {
+            ui.selectable_value(easing, Easing::Custom(curve), name);
+        }
+    });
+}
 
 /// Progress shown from this value at the bottom to `TOP` at the top, so
 /// curves that overshoot stay in view.
@@ -16,7 +154,7 @@ const HANDLE_RADIUS: f32 = 6.0;
 /// turns a preset into a custom curve. Returns whether `easing` changed.
 pub fn easing_graph(ui: &mut Ui, easing: &mut Easing) -> bool {
     let width = ui.available_width();
-    let (outer, response) = ui.allocate_exact_size(vec2(width, 230.0), Sense::hover());
+    let (outer, response) = ui.allocate_exact_size(vec2(width, 280.0), Sense::hover());
     let painter = ui.painter_at(outer);
     painter.rect_filled(outer, CornerRadius::same(8), theme::BG_DEEP);
 

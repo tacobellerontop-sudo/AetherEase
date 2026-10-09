@@ -26,6 +26,8 @@ pub struct TimelineState {
     drag: Option<TimelineDrag>,
     /// Groups whose contents are folded away.
     pub collapsed: std::collections::HashSet<u64>,
+    /// Whether the graph editor window is showing.
+    pub graph_open: bool,
 }
 
 /// An in-progress drag. Tracked here instead of on a widget response so a
@@ -232,6 +234,16 @@ impl AetherApp {
                 .clicked()
                 {
                     self.timeline.zoom = None;
+                }
+                if icons::toggle(
+                    ui,
+                    Icon::Graph,
+                    "Graph editor: shape the easing between keyframes",
+                    self.timeline.graph_open,
+                )
+                .clicked()
+                {
+                    self.timeline.graph_open = !self.timeline.graph_open;
                 }
             },
         );

@@ -714,5 +714,6 @@ impl AetherApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport_ui(ui));
+        self.graph_window(&ctx);
     }
 }
