@@ -5,7 +5,7 @@ use egui::{Color32, CornerRadius, DragValue, Grid, RichText, Sense, Stroke, Ui, 
 
 use crate::app::AetherApp;
 use crate::fonts::{self, FontChoice};
-use crate::model::anim::Lerp;
+use crate::model::anim::{Bezier, Lerp};
 use crate::model::{
     Animated, BlendMode, Color, Easing, Effect, EffectKind, FillStyle, KeyTrack, Layer, LayerKind,
     LightKind, ShapeKind,
@@ -607,6 +607,29 @@ impl AetherApp {
                 ui.horizontal_wrapped(|ui| {
                     for e in Easing::ALL {
                         ui.selectable_value(&mut easing, e, e.label());
+                    }
+                    if matches!(easing, Easing::Custom(_)) {
+                        let _ = ui.selectable_label(true, "Custom");
+                    }
+                });
+                ui.add_space(4.0);
+                super::graph::easing_graph(ui, &mut easing);
+                if let Easing::Custom(c) = easing {
+                    ui.label(
+                        RichText::new(format!(
+                            "cubic-bezier({:.2}, {:.2}, {:.2}, {:.2})",
+                            c.x1, c.y1, c.x2, c.y2
+                        ))
+                        .monospace()
+                        .weak(),
+                    );
+                } else {
+                    ui.label(RichText::new("Drag the handles to shape your own curve").weak());
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for (name, curve) in Bezier::PRESETS {
+                        let e = Easing::Custom(curve);
+                        ui.selectable_value(&mut easing, e, name);
                     }
                 });
             });

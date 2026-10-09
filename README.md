@@ -99,8 +99,13 @@ grow into a real alternative to After Effects.
 - **Keyframes** on position, scale, rotation, opacity, colour, size, corner
   radius, and border. Click a property's diamond to add a key; once a property
   has keys, editing it at another frame adds a key there automatically.
-  Easing per key: linear, ease in, ease out, ease in & out, hold. Properties
-  and easing are edited only in the sidebar.
+  Easing per key: linear, ease in, ease out, ease in & out, hold, or a
+  custom curve. Properties and easing are edited only in the sidebar.
+- **Graph editor**: select a keyframe to see its easing curve in the
+  sidebar. Drag the two handles to shape a custom curve (handles can go
+  above or below the square for overshoot and anticipation), or start from a
+  named curve such as Smooth, Snappy, Expo out or Back in & out. Hover the
+  graph to watch the motion play.
 - **Timeline**: one bar per layer, with its keyframes shown right on the bar.
   Click a key to select it and jump to it, drag it to retime, right-click for
   easing or delete. Scrub on the ruler, drag bars to move layers in time
@@ -145,7 +150,7 @@ On Linux, audio playback needs the ALSA headers to build
 
 | Path | What it holds |
 |---|---|
-| `src/model/anim.rs` | `Animated<T>` values, keyframes, easing |
+| `src/model/anim.rs` | `Animated<T>` values, keyframes, easing and custom bezier curves |
 | `src/model/groups.rs` | Grouping, ungrouping and moving layers between groups in place |
 | `src/model/space.rs` | 3D transforms, parenting, the camera and perspective |
 | `src/audio.rs` | Audio playback in step with the playhead, waveforms |
@@ -161,12 +166,11 @@ On Linux, audio playback needs the ALSA headers to build
 | `src/history.rs` | Snapshot-based undo/redo |
 | `src/app.rs` | Screens, editor state, file handling, autosave, shortcuts, playback |
 | `src/recent.rs` | Recent projects list and the projects folder |
-| `src/ui/` | Home screen and new project dialog, menu and toolbar, canvas viewport, inspector, timeline |
+| `src/ui/` | Home screen and new project dialog, menu and toolbar, canvas viewport, inspector, graph editor, timeline, pen and brush tools |
 
 The UI is built with [egui](https://github.com/emilk/egui)/eframe. The canvas
 preview, thumbnails and export all come from the same tiny-skia compositor.
 
 ## Roadmap
 
-- Graph editor for custom bezier easing
 - Lottie and Alight Motion project import

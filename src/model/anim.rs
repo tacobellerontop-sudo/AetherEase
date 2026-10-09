@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::Color;
 
 /// How a keyframe eases into the next one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Easing {
     #[default]
     Linear,
@@ -21,9 +21,12 @@ pub enum Easing {
     EaseInOut,
     /// Keep this keyframe's value until the next keyframe, then jump.
     Hold,
+    /// A curve drawn in the graph editor.
+    Custom(Bezier),
 }
 
 impl Easing {
+    /// The presets offered next to the graph editor.
     pub const ALL: [Easing; 5] = [
         Easing::Linear,
         Easing::EaseIn,
@@ -39,10 +42,12 @@ impl Easing {
             Easing::EaseOut => "Ease out",
             Easing::EaseInOut => "Ease in & out",
             Easing::Hold => "Hold",
+            Easing::Custom(_) => "Custom",
         }
     }
 
-    /// Maps linear progress `t` in `0..=1` to eased progress.
+    /// Maps linear progress `t` in `0..=1` to eased progress. Custom curves
+    /// may overshoot below 0 or above 1.
     pub fn apply(self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {
@@ -57,7 +62,91 @@ impl Easing {
                 }
             }
             Easing::Hold => 0.0,
+            Easing::Custom(curve) => curve.apply(t),
         }
+    }
+
+    /// The curve to start editing from in the graph editor: the preset's
+    /// shape as a bezier.
+    pub fn as_curve(self) -> Bezier {
+        match self {
+            Easing::Linear | Easing::Hold => {
+                Bezier::new(1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0)
+            }
+            Easing::EaseIn => Bezier::new(1.0 / 3.0, 0.0, 2.0 / 3.0, 0.0),
+            Easing::EaseOut => Bezier::new(1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0),
+            Easing::EaseInOut => Bezier::new(0.66, 0.0, 0.34, 1.0),
+            Easing::Custom(curve) => curve,
+        }
+    }
+}
+
+/// An easing curve from (0, 0) to (1, 1) with two control points, as in CSS
+/// `cubic-bezier()`. x is time and stays within `0..=1`; y is progress and
+/// may overshoot.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Bezier {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+}
+
+impl Bezier {
+    pub const fn new(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        Self { x1, y1, x2, y2 }
+    }
+
+    /// Named curves offered under the graph editor.
+    pub const PRESETS: [(&'static str, Bezier); 6] = [
+        ("Smooth", Bezier::new(0.25, 0.1, 0.25, 1.0)),
+        ("Snappy", Bezier::new(0.8, 0.0, 0.2, 1.0)),
+        ("Expo out", Bezier::new(0.16, 1.0, 0.3, 1.0)),
+        ("Back in", Bezier::new(0.6, -0.28, 0.735, 0.045)),
+        ("Back out", Bezier::new(0.175, 0.885, 0.32, 1.275)),
+        ("Back in & out", Bezier::new(0.68, -0.55, 0.265, 1.55)),
+    ];
+
+    fn axis(a: f32, b: f32, s: f32) -> f32 {
+        let u = 1.0 - s;
+        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
+    }
+
+    /// The point on the curve at parameter `s`.
+    pub fn point(&self, s: f32) -> (f32, f32) {
+        (
+            Self::axis(self.x1, self.x2, s),
+            Self::axis(self.y1, self.y2, s),
+        )
+    }
+
+    /// Progress at time `t`: finds where the curve crosses `t` and reads its
+    /// height there.
+    pub fn apply(&self, t: f32) -> f32 {
+        let (x1, x2) = (self.x1.clamp(0.0, 1.0), self.x2.clamp(0.0, 1.0));
+        let x = |s: f32| Self::axis(x1, x2, s);
+        let slope = |s: f32| {
+            let u = 1.0 - s;
+            3.0 * u * u * x1 + 6.0 * u * s * (x2 - x1) + 3.0 * s * s * (1.0 - x2)
+        };
+        // Newton's method converges fast on most curves; bisection catches
+        // the flat ones. x(s) only rises because x1 and x2 are in 0..=1.
+        let mut s = t;
+        for _ in 0..8 {
+            let d = slope(s);
+            if d.abs() < 1e-6 {
+                break;
+            }
+            s = (s - (x(s) - t) / d).clamp(0.0, 1.0);
+        }
+        if (x(s) - t).abs() > 1e-5 {
+            let (mut lo, mut hi) = (0.0, 1.0);
+            for _ in 0..30 {
+                s = (lo + hi) / 2.0;
+                if x(s) < t { lo = s } else { hi = s }
+            }
+        }
+        Self::axis(self.y1, self.y2, s)
     }
 }
 
@@ -293,6 +382,36 @@ mod tests {
         a.set_easing(10, Easing::EaseInOut);
         assert!(a.sample(12.0) < 20.0);
         assert!((a.sample(15.0) - 50.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn custom_curves() {
+        let linear = Easing::Linear.as_curve();
+        for i in 0..=10 {
+            let t = i as f32 / 10.0;
+            assert!((linear.apply(t) - t).abs() < 1e-4);
+        }
+        // The bezier stand-ins stay close to the presets they replace.
+        for e in [Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
+            for i in 0..=20 {
+                let t = i as f32 / 20.0;
+                assert!(
+                    (e.as_curve().apply(t) - e.apply(t)).abs() < 0.01,
+                    "{e:?} at {t}"
+                );
+            }
+        }
+        let back = Easing::Custom(Bezier::PRESETS[4].1);
+        assert!(
+            (0..100).any(|i| back.apply(i as f32 / 100.0) > 1.0),
+            "overshoots"
+        );
+        assert_eq!(back.apply(1.0), 1.0);
+
+        let mut a = track();
+        a.set_easing(10, back);
+        let json = serde_json::to_string(&a).unwrap();
+        assert_eq!(serde_json::from_str::<Animated<f32>>(&json).unwrap(), a);
     }
 
     #[test]
